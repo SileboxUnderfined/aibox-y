@@ -32,6 +32,9 @@ type Config struct {
 	MaxTokens int    `json:"max_tokens"`
 	// Effort is passed to Anthropic models as output_config.effort.
 	Effort string `json:"effort,omitempty"`
+	// Title and Aliases are how the model is named by voice.
+	Title   string   `json:"title,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 var ErrNoKey = errors.New("API key is not set")

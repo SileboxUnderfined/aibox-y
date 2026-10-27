@@ -10,10 +10,15 @@ import (
 	"aiboxy/internal/providers"
 )
 
-type fakeLLM struct{ calls [][]providers.Message }
+type fakeLLM struct {
+	name    string
+	calls   [][]providers.Message
+	systems []string
+}
 
 func (f *fakeLLM) Complete(_ context.Context, system string, m []providers.Message) (string, error) {
 	f.calls = append(f.calls, m)
+	f.systems = append(f.systems, system)
 	if strings.HasPrefix(system, "Придумай название") {
 		return "Космос", nil
 	}
@@ -25,8 +30,8 @@ func setup(t *testing.T) (*Resolver, *fakeLLM, *chats.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	llm := &fakeLLM{}
-	return New(Options{Provider: llm, Store: store}), llm, store
+	llm := &fakeLLM{name: "deepseek"}
+	return New(Options{Models: map[string]*Model{"deepseek": {Key: "deepseek", Title: "DeepSeek", Aliases: []string{"дипсик"}, Completer: llm}}, DefaultModel: "deepseek", Store: store}), llm, store
 }
 
 func say(t *testing.T, r *Resolver, text string) (string, string) {
@@ -117,5 +122,51 @@ func TestUnknownChat(t *testing.T) {
 	r, _, _ := setup(t)
 	if _, a := say(t, r, "продолжи чат марс"); !strings.Contains(a, "Не нашла") {
 		t.Fatalf("answer = %q", a)
+	}
+}
+
+func TestModelAndPrompt(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := chats.Open(dir)
+	ds, cl := &fakeLLM{name: "deepseek"}, &fakeLLM{name: "claude"}
+	opt := Options{
+		Models: map[string]*Model{
+			"deepseek": {Key: "deepseek", Title: "DeepSeek", Aliases: []string{"дипсик"}, Completer: ds},
+			"claude":   {Key: "claude", Title: "Claude", Aliases: []string{"клод"}, Completer: cl},
+		},
+		DefaultModel: "deepseek", StatePath: dir + "/state.json", Store: store,
+	}
+	r := New(opt)
+	if route, _ := say(t, r, "Алиса, переключись на кухню"); route != "yandex" {
+		t.Fatal("unknown switch target must go to Yandex")
+	}
+	if _, a := say(t, r, "переключись на клод"); !strings.Contains(a, "Claude") {
+		t.Fatalf("switch answer = %q", a)
+	}
+	if _, a := say(t, r, "выбери модель марсианин"); !strings.Contains(a, "Не знаю") {
+		t.Fatalf("unknown model answer = %q", a)
+	}
+	if _, a := say(t, r, "системный промпт ты пират"); !strings.Contains(a, "Ты пират") {
+		t.Fatalf("prompt answer = %q", a)
+	}
+	say(t, r, "поговорить")
+	say(t, r, "привет")
+	if len(cl.calls) != 1 || len(ds.calls) != 0 {
+		t.Fatalf("calls: claude %d deepseek %d", len(cl.calls), len(ds.calls))
+	}
+	if !strings.Contains(cl.systems[0], "Ты пират") || !strings.Contains(cl.systems[0], "прочитан вслух") {
+		t.Fatalf("system prompt = %q", cl.systems[0])
+	}
+	// Settings survive a restart.
+	r2 := New(opt)
+	if r2.CurrentModel() != "claude" || !strings.Contains(r2.systemPrompt(), "Ты пират") {
+		t.Fatal("state not restored")
+	}
+	say(t, r2, "сбрось системный промпт")
+	if strings.Contains(r2.systemPrompt(), "пират") {
+		t.Fatal("prompt not reset")
+	}
+	if _, a := say(t, r2, "какая модель"); !strings.Contains(a, "Сейчас отвечает Claude") {
+		t.Fatalf("which model = %q", a)
 	}
 }

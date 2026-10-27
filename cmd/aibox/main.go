@@ -60,7 +60,7 @@ func loadConfig(path string) (*Config, error) {
 	if host, _, err := net.SplitHostPort(cfg.Listen); err != nil || (host != "127.0.0.1" && host != "::1" && host != "localhost") {
 		return nil, errors.New("config: listen must be a loopback address")
 	}
-	if cfg.Mode == "chat" {
+	if cfg.Mode == "chat" || cfg.Provider != "" {
 		if _, ok := cfg.Providers[cfg.Provider]; !ok {
 			return nil, fmt.Errorf("config: provider %q is not in providers", cfg.Provider)
 		}
@@ -100,11 +100,16 @@ func main() {
 	}
 	var resolver *aibox.Resolver
 	if cfg.Mode == "chat" || *ask != "" {
-		provider, err := providers.New(cfg.Providers[cfg.Provider])
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		models := map[string]*aibox.Model{}
+		for key, pc := range cfg.Providers {
+			completer, err := providers.New(pc)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "provider %s: %v\n", key, err)
+				os.Exit(1)
+			}
+			models[key] = &aibox.Model{Key: key, Title: pc.Title, Aliases: pc.Aliases, Completer: completer}
 		}
+		provider := models[cfg.Provider].Completer
 		if *ask != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
@@ -122,7 +127,9 @@ func main() {
 			os.Exit(1)
 		}
 		resolver = aibox.New(aibox.Options{
-			Provider:       provider,
+			Models:         models,
+			DefaultModel:   cfg.Provider,
+			StatePath:      filepath.Join(filepath.Dir(*path), "state.json"),
 			Store:          store,
 			SystemPrompt:   cfg.SystemPrompt,
 			Idle:           time.Duration(cfg.IdleMinutes) * time.Minute,
@@ -155,7 +162,11 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "mode": cfg.Mode, "provider": cfg.Provider, "client_frames": clientFrames.Load(), "server_frames": serverFrames.Load(), "sessions": sessions.Load()})
+		current := cfg.Provider
+		if resolver != nil {
+			current = resolver.CurrentModel()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "mode": cfg.Mode, "provider": current, "client_frames": clientFrames.Load(), "server_frames": serverFrames.Load(), "sessions": sessions.Load()})
 	})
 	mux.Handle("/uni.ws", proxy)
 	server := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}

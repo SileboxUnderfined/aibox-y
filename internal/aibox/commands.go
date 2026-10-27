@@ -17,6 +17,12 @@ const (
 	cmdForget
 	cmdList
 	cmdExit
+	cmdModel       // explicit "модель X": answers even when X is unknown
+	cmdModelSwitch // "переключись на X": only when X names a model
+	cmdWhichModel
+	cmdSetPrompt
+	cmdResetPrompt
+	cmdShowPrompt
 )
 
 type command struct {
@@ -33,6 +39,12 @@ var patterns = []struct {
 	{cmdTemporary, regexp.MustCompile(`^(?:давай )?поговори(?:ть|м)(?: со мной)?$`)},
 	{cmdForget, regexp.MustCompile(`^(?:забудь|забыть|удали|удалить) чат (.+)$`)},
 	{cmdList, regexp.MustCompile(`^(?:список чатов|мои чаты|какие (?:у меня )?(?:есть )?чаты(?: есть)?)$`)},
+	{cmdWhichModel, regexp.MustCompile(`^(?:какая (?:сейчас )?модель(?: сейчас)?|список моделей|какие (?:есть )?модели(?: есть)?)$`)},
+	{cmdModel, regexp.MustCompile(`^(?:выбери|выбрать|смени|сменить|поставь|переключи|переключись на|используй)? ?модель (?:на )?(.+)$`)},
+	{cmdModelSwitch, regexp.MustCompile(`^(?:переключись на|переключи на|переключиться на|используй|давай) (.+)$`)},
+	{cmdResetPrompt, regexp.MustCompile(`^(?:сбрось|сбросить|удали|убери|очисти) (?:системный промпт|промпт|роль)$`)},
+	{cmdShowPrompt, regexp.MustCompile(`^(?:какой (?:сейчас )?(?:системный )?промпт|какая (?:у тебя )?роль)$`)},
+	{cmdSetPrompt, regexp.MustCompile(`^(?:(?:установи |поставь |новый |смени )?системный промпт|(?:установи |новая |смени )роль|твоя роль) (?:на |это )?(.+)$`)},
 }
 
 var exitPhrases = regexp.MustCompile(`^(?:хватит|стоп|выход|выйти|выйди|пока|закрой чат|закрыть чат|выйди из чата|выйти из чата|заверши чат|завершить чат|конец чата)$`)

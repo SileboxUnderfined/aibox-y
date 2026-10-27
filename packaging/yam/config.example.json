@@ -5,10 +5,14 @@
   "chats_dir": "chats",
   "provider": "deepseek",
   "providers": {
-    "deepseek": {"type": "openai", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "api_key_env": "DEEPSEEK_API_KEY", "max_tokens": 600},
-    "openai": {"type": "openai", "base_url": "https://api.openai.com/v1", "model": "gpt-5.6-luna", "api_key_env": "OPENAI_API_KEY", "max_tokens": 600},
-    "openrouter": {"type": "openai", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-v4.1-flash", "api_key_env": "OPENROUTER_API_KEY", "max_tokens": 600},
-    "claude": {"type": "anthropic", "model": "claude-opus-5-5", "effort": "low", "api_key_env": "ANTHROPIC_API_KEY", "max_tokens": 1024}
+    "deepseek": {"type": "openai", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "api_key_env": "DEEPSEEK_API_KEY", "max_tokens": 600,
+      "title": "DeepSeek", "aliases": ["дипсик", "дип сик", "дипсиг"]},
+    "openai": {"type": "openai", "base_url": "https://api.openai.com/v1", "model": "gpt-5.6-luna", "api_key_env": "OPENAI_API_KEY", "max_tokens": 600,
+      "title": "ChatGPT", "aliases": ["чат джипити", "чатджипити", "джипити", "гпт", "опен эй ай"]},
+    "openrouter": {"type": "openai", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-v4.1-flash", "api_key_env": "OPENROUTER_API_KEY", "max_tokens": 600,
+      "title": "OpenRouter", "aliases": ["опен роутер", "опенроутер", "роутер"]},
+    "claude": {"type": "anthropic", "model": "claude-opus-5-5", "effort": "low", "api_key_env": "ANTHROPIC_API_KEY", "max_tokens": 1024,
+      "title": "Claude", "aliases": ["клод", "клауд", "клод опус"]}
   },
   "system_prompt": "",
   "idle_minutes": 10,

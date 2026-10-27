@@ -17,7 +17,9 @@ import (
 const DefaultSystemPrompt = "Ты голосовой ассистент в умной колонке. Отвечай по-русски, коротко и по делу, обычно в два-четыре предложения. Ответ будет прочитан вслух: без Markdown, списков, эмодзи, ссылок и формул; числа и сокращения пиши так, как их произносят."
 
 type Options struct {
-	Provider       providers.Completer
+	Models         map[string]*Model
+	DefaultModel   string
+	StatePath      string // where voice-changed settings are kept
 	Store          *chats.Store
 	SystemPrompt   string
 	Idle           time.Duration
@@ -37,6 +39,7 @@ type Resolver struct {
 	opt    Options
 	mu     sync.Mutex
 	active *session
+	state  state
 	now    func() time.Time
 }
 
@@ -53,7 +56,41 @@ func New(opt Options) *Resolver {
 	if opt.RequestTimeout <= 0 {
 		opt.RequestTimeout = 40 * time.Second
 	}
-	return &Resolver{opt: opt, now: time.Now}
+	r := &Resolver{opt: opt, now: time.Now, state: loadState(opt.StatePath)}
+	if _, ok := opt.Models[r.state.Model]; !ok {
+		r.state.Model = opt.DefaultModel
+	}
+	return r
+}
+
+func (r *Resolver) model() *Model {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.opt.Models[r.state.Model]
+}
+
+// CurrentModel is the key of the model that answers now.
+func (r *Resolver) CurrentModel() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.state.Model
+}
+
+func (r *Resolver) systemPrompt() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state.SystemPrompt == "" {
+		return r.opt.SystemPrompt
+	}
+	// The voice rules stay; the user's prompt adds a role or style on top.
+	return r.opt.SystemPrompt + "\n\nУказания пользователя: " + r.state.SystemPrompt
+}
+
+func (r *Resolver) update(change func(*state)) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	change(&r.state)
+	return saveState(r.opt.StatePath, r.state)
 }
 
 // inChat reports whether a chat is open, closing it after the idle timeout.
@@ -70,6 +107,9 @@ func (r *Resolver) inChat() bool {
 func (r *Resolver) Decide(_ context.Context, text string) bridge.RouteDecision {
 	inChat := r.inChat()
 	c := parse(text, inChat)
+	if c.kind == cmdModelSwitch && findModel(r.opt.Models, c.name) == nil {
+		c.kind = cmdNone
+	}
 	if c.kind != cmdNone {
 		return bridge.RouteDecision{Route: "llm", Source: "aibox_command"}
 	}
@@ -93,6 +133,9 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 
 func (r *Resolver) handle(ctx context.Context, text string) string {
 	c := parse(text, r.inChat())
+	if c.kind == cmdModelSwitch && findModel(r.opt.Models, c.name) == nil {
+		c.kind = cmdNone
+	}
 	slog.Info("chat_command", "kind", int(c.kind))
 	switch c.kind {
 	case cmdNew:
@@ -143,6 +186,36 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		r.active = nil
 		r.mu.Unlock()
 		return "Выхожу из чата."
+	case cmdModel, cmdModelSwitch:
+		m := findModel(r.opt.Models, c.name)
+		if m == nil {
+			return "Не знаю модель «" + c.name + "». Есть: " + modelList(r.opt.Models) + "."
+		}
+		if err := r.update(func(s *state) { s.Model = m.Key }); err != nil {
+			slog.Warn("state_save_failed")
+		}
+		return "Теперь отвечает " + m.spoken() + "."
+	case cmdWhichModel:
+		return "Сейчас отвечает " + r.model().spoken() + ". Можно выбрать: " + modelList(r.opt.Models) + "."
+	case cmdSetPrompt:
+		prompt := capitalize(c.name)
+		if err := r.update(func(s *state) { s.SystemPrompt = prompt }); err != nil {
+			slog.Warn("state_save_failed")
+		}
+		return "Запомнила новый системный промпт: " + prompt + "."
+	case cmdResetPrompt:
+		if err := r.update(func(s *state) { s.SystemPrompt = "" }); err != nil {
+			slog.Warn("state_save_failed")
+		}
+		return "Вернула обычный системный промпт."
+	case cmdShowPrompt:
+		r.mu.Lock()
+		custom := r.state.SystemPrompt
+		r.mu.Unlock()
+		if custom == "" {
+			return "Сейчас обычный системный промпт, без дополнительной роли."
+		}
+		return "Сейчас системный промпт: " + custom + "."
 	}
 	return r.ask(ctx, text)
 }
@@ -185,7 +258,7 @@ func (r *Resolver) ask(ctx context.Context, text string) string {
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
 	started := r.now()
-	answer, err := r.opt.Provider.Complete(ctx, r.opt.SystemPrompt, messages)
+	answer, err := r.model().Completer.Complete(ctx, r.systemPrompt(), messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
 	if err != nil {
 		if errors.Is(err, providers.ErrNoKey) {
@@ -222,7 +295,7 @@ func (r *Resolver) ask(ctx context.Context, text string) string {
 func (r *Resolver) title(chat *chats.Chat, question string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	name, err := r.opt.Provider.Complete(ctx, "Придумай название для разговора по первому вопросу: одно-три простых русских слова, которые легко произнести. Выведи только название, без кавычек и точки.", []providers.Message{{Role: "user", Content: question}})
+	name, err := r.model().Completer.Complete(ctx, "Придумай название для разговора по первому вопросу: одно-три простых русских слова, которые легко произнести. Выведи только название, без кавычек и точки.", []providers.Message{{Role: "user", Content: question}})
 	name = strings.Trim(strings.TrimSpace(name), "«»\"'.")
 	if err != nil || name == "" || len([]rune(name)) > 40 {
 		return
