@@ -585,6 +585,10 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 			n.mu.Unlock()
 			return
 		}
+		if result.Route == "yandex" && p.streaming {
+			// The progress stream already cancelled the cloud request.
+			result = Resolution{Route: "llm", Answer: "Не получилось получить ответ нейросети."}
+		}
 		if n.OnRoute != nil {
 			n.OnRoute(p.id, result.Route)
 		}

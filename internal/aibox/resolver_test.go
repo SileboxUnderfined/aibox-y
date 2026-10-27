@@ -335,3 +335,30 @@ func TestQuickQuestionModel(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond) // let title goroutines finish before cleanup
 }
+
+type brokenLLM struct{}
+
+func (brokenLLM) Complete(context.Context, string, []providers.Message) (string, error) {
+	return "", providers.ErrNoKey
+}
+
+func TestModelFailureFallsBackToAlice(t *testing.T) {
+	r, _, store := setup(t)
+	r.opt.Models["deepseek"].Completer = brokenLLM{}
+	if route, _ := say(t, r, "Алиса, спроси, какая погода"); route != "yandex" {
+		t.Fatalf("quick question route = %s", route)
+	}
+	if r.inChat() {
+		t.Fatal("failed quick question left a chat open")
+	}
+	say(t, r, "новый чат")
+	if route, _ := say(t, r, "расскажи анекдот"); route != "yandex" {
+		t.Fatalf("chat route = %s", route)
+	}
+	if !r.inChat() {
+		t.Fatal("chat closed after one failure")
+	}
+	if list, _ := store.List(); len(list) != 0 {
+		t.Fatalf("failed answers saved: %+v", list)
+	}
+}

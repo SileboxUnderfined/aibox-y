@@ -179,11 +179,18 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 	if d.Route != "llm" {
 		return bridge.Resolution{Route: "yandex"}, nil
 	}
-	answer := r.handle(ctx, text)
+	answer, ok := r.handle(ctx, text)
+	if !ok {
+		// Any model failure hands the request to Alice as if AIBox were not there.
+		slog.Info("llm_fallback_to_yandex")
+		return bridge.Resolution{Route: "yandex"}, nil
+	}
 	return bridge.Resolution{Route: "llm", Answer: answer}, nil
 }
 
-func (r *Resolver) handle(ctx context.Context, text string) string {
+// handle answers a chat request; false means the model failed and Alice
+// should answer instead.
+func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 	c := parse(text, r.inChat())
 	if c.kind == cmdModelSwitch && r.find(c.name) == nil {
 		c.kind = cmdNone
@@ -199,59 +206,65 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		}
 		if name != "" {
 			if err := r.opt.Store.Save(chat); err != nil {
-				return "Не получилось сохранить чат."
+				return "Не получилось сохранить чат.", true
 			}
 		}
 		r.open(&session{chat: chat})
 		if name != "" {
-			return "Создала чат «" + name + "». Слушаю."
+			return "Создала чат «" + name + "». Слушаю.", true
 		}
-		return "Новый чат. Слушаю."
+		return "Новый чат. Слушаю.", true
 	case cmdContinue:
 		chat, err := r.opt.Store.Find(c.name)
 		if err != nil {
-			return "Не нашла чат «" + c.name + "». " + r.listText()
+			return "Не нашла чат «" + c.name + "». " + r.listText(), true
 		}
 		r.open(&session{chat: chat})
-		return "Продолжаем чат «" + chat.Name + "». Слушаю."
+		return "Продолжаем чат «" + chat.Name + "». Слушаю.", true
 	case cmdQuick:
 		model, question := r.quick(text)
 		r.open(&session{chat: &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}, model: model})
 		if question == "" {
 			if model != "" {
-				return "Новый чат, отвечает " + r.modelFor(model).spoken() + ". Слушаю."
+				return "Новый чат, отвечает " + r.modelFor(model).spoken() + ". Слушаю.", true
 			}
-			return "Новый чат. Слушаю."
+			return "Новый чат. Слушаю.", true
 		}
-		return r.askQuestion(ctx, question)
+		answer, ok := r.askQuestion(ctx, question)
+		if !ok {
+			r.mu.Lock()
+			r.active = nil // nothing was asked yet, so nothing to keep open
+			r.mu.Unlock()
+		}
+		return answer, ok
 	case cmdTemporary:
 		r.open(&session{chat: &chats.Chat{ID: chats.NewID()}, temporary: true})
-		return "Давай поговорим. Этот разговор я не сохраню."
+		return "Давай поговорим. Этот разговор я не сохраню.", true
 	case cmdForget:
 		chat, err := r.opt.Store.Find(c.name)
 		if err != nil {
-			return "Не нашла чат «" + c.name + "»."
+			return "Не нашла чат «" + c.name + "».", true
 		}
 		if err := r.opt.Store.Delete(chat.ID); err != nil {
-			return "Не получилось удалить чат."
+			return "Не получилось удалить чат.", true
 		}
 		r.mu.Lock()
 		if r.active != nil && r.active.chat.ID == chat.ID {
 			r.active = nil
 		}
 		r.mu.Unlock()
-		return "Забыла чат «" + chat.Name + "»."
+		return "Забыла чат «" + chat.Name + "».", true
 	case cmdList:
-		return r.listText()
+		return r.listText(), true
 	case cmdExit:
 		r.mu.Lock()
 		r.active = nil
 		r.mu.Unlock()
-		return "Выхожу из чата."
+		return "Выхожу из чата.", true
 	case cmdModel, cmdModelSwitch:
 		m := r.find(c.name)
 		if m == nil {
-			return "Не знаю модель «" + c.name + "». Есть: " + r.modelNames() + "."
+			return "Не знаю модель «" + c.name + "». Есть: " + r.modelNames() + ".", true
 		}
 		if err := r.update(func(s *state) {
 			s.Model = m.Key
@@ -261,28 +274,28 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		}); err != nil {
 			slog.Warn("state_save_failed")
 		}
-		return "Теперь отвечает " + m.spoken() + "."
+		return "Теперь отвечает " + m.spoken() + ".", true
 	case cmdWhichModel:
-		return "Сейчас отвечает " + r.model().spoken() + ". Можно выбрать: " + r.modelNames() + "."
+		return "Сейчас отвечает " + r.model().spoken() + ". Можно выбрать: " + r.modelNames() + ".", true
 	case cmdSetPrompt:
 		prompt := capitalize(c.name)
 		if err := r.update(func(s *state) { s.SystemPrompt = prompt }); err != nil {
 			slog.Warn("state_save_failed")
 		}
-		return "Запомнила новый системный промпт: " + prompt + "."
+		return "Запомнила новый системный промпт: " + prompt + ".", true
 	case cmdResetPrompt:
 		if err := r.update(func(s *state) { s.SystemPrompt = "" }); err != nil {
 			slog.Warn("state_save_failed")
 		}
-		return "Вернула обычный системный промпт."
+		return "Вернула обычный системный промпт.", true
 	case cmdShowPrompt:
 		r.mu.Lock()
 		custom := r.state.SystemPrompt
 		r.mu.Unlock()
 		if custom == "" {
-			return "Сейчас обычный системный промпт, без дополнительной роли."
+			return "Сейчас обычный системный промпт, без дополнительной роли.", true
 		}
-		return "Сейчас системный промпт: " + custom + "."
+		return "Сейчас системный промпт: " + custom + ".", true
 	}
 	return r.ask(ctx, text)
 }
@@ -309,16 +322,16 @@ func (r *Resolver) listText() string {
 	return "Ваши чаты: " + strings.Join(names, ", ") + "."
 }
 
-func (r *Resolver) ask(ctx context.Context, text string) string {
+func (r *Resolver) ask(ctx context.Context, text string) (string, bool) {
 	return r.askQuestion(ctx, stripWake(text))
 }
 
-func (r *Resolver) askQuestion(ctx context.Context, question string) string {
+func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bool) {
 	r.mu.Lock()
 	s := r.active
 	r.mu.Unlock()
 	if s == nil {
-		return "Чат закрыт. Скажите «новый чат» или «поговорить»."
+		return "", false
 	}
 	history := s.chat.Messages
 	if len(history) > r.opt.MaxHistory {
@@ -331,14 +344,12 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) string {
 	started := r.now()
 	answer, err := model.Completer.Complete(ctx, r.systemPrompt(), messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
+	if err == nil && strings.TrimSpace(answer) == "" {
+		err = errors.New("empty answer")
+	}
 	if err != nil {
-		if errors.Is(err, providers.ErrNoKey) {
-			return "Не задан ключ API для нейросети."
-		}
-		if ctx.Err() != nil {
-			return "Нейросеть не ответила вовремя."
-		}
-		return "Не получилось получить ответ нейросети."
+		slog.Warn("llm_failed", "no_key", errors.Is(err, providers.ErrNoKey), "timeout", ctx.Err() != nil)
+		return "", false
 	}
 	r.mu.Lock()
 	s.chat.Messages = append(s.chat.Messages, providers.Message{Role: "user", Content: question}, providers.Message{Role: "assistant", Content: answer})
@@ -359,7 +370,7 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) string {
 	if needsName {
 		go r.title(model, chat, question)
 	}
-	return answer
+	return answer, true
 }
 
 // title asks the model for a short spoken name for a new chat.
