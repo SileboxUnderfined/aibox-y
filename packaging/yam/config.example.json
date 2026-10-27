@@ -15,6 +15,7 @@
       "title": "Claude", "aliases": ["клод", "клауд", "клод опус"]}
   },
   "system_prompt": "",
+  "web": {"enabled": true, "listen": ":8100"},
   "idle_minutes": 10,
   "max_history": 20,
   "request_timeout_seconds": 40,

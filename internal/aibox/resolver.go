@@ -60,13 +60,21 @@ func New(opt Options) *Resolver {
 	if _, ok := opt.Models[r.state.Model]; !ok {
 		r.state.Model = opt.DefaultModel
 	}
+	for key, id := range r.state.ModelIDs {
+		if m, ok := opt.Models[key]; ok && id != "" {
+			if err := m.setModelID(id); err != nil {
+				slog.Warn("model_override_rejected", "provider", key)
+			}
+		}
+	}
 	return r
 }
 
-func (r *Resolver) model() *Model {
+// model returns a copy, so a model change from the web panel never races a request.
+func (r *Resolver) model() Model {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.opt.Models[r.state.Model]
+	return *r.opt.Models[r.state.Model]
 }
 
 // CurrentModel is the key of the model that answers now.
@@ -79,11 +87,15 @@ func (r *Resolver) CurrentModel() string {
 func (r *Resolver) systemPrompt() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	base := r.opt.SystemPrompt
+	if r.state.BasePrompt != "" {
+		base = r.state.BasePrompt
+	}
 	if r.state.SystemPrompt == "" {
-		return r.opt.SystemPrompt
+		return base
 	}
 	// The voice rules stay; the user's prompt adds a role or style on top.
-	return r.opt.SystemPrompt + "\n\nУказания пользователя: " + r.state.SystemPrompt
+	return base + "\n\nУказания пользователя: " + r.state.SystemPrompt
 }
 
 func (r *Resolver) update(change func(*state)) error {

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIBox</title>
+<style>
+:root{--bg:#f6f6f4;--card:#fff;--ink:#1d1d1b;--muted:#6b6b66;--line:#e2e2dc;--accent:#5b4fd6;--ok:#2f7d4f;--bad:#b3412f}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#20201e;--ink:#ecece8;--muted:#9a9a93;--line:#34342f;--accent:#9a90ff;--ok:#6cc58f;--bad:#ef8a76}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px 96px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:16px;margin:0 0 12px}
+p.sub{color:var(--muted);margin:0 0 20px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.prov{border-top:1px solid var(--line);padding:12px 0}
+.prov:first-of-type{border-top:0;padding-top:0}
+.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.head label{font-weight:600;display:flex;gap:8px;align-items:center;cursor:pointer}
+.badge{font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid currentColor}
+.badge.ok{color:var(--ok)}.badge.bad{color:var(--bad)}
+.row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.row input{flex:1 1 220px}
+input,textarea,button{font:inherit;color:inherit}
+input,textarea{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+textarea{min-height:110px;resize:vertical}
+button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.hint{color:var(--muted);font-size:13px;margin:6px 0 0}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:12px 16px}
+.bar div{max-width:720px;margin:0 auto;display:flex;gap:12px;align-items:center}
+#status{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>AIBox</h1>
+<p class="sub">Нейросети в Яндекс Станции. Изменения применяются сразу, без перезапуска.</p>
+
+<section>
+<h2>Модель</h2>
+<div id="providers">Загрузка…</div>
+<p class="hint">Отмеченный провайдер отвечает в чатах. Ключи хранятся только на колонке и сюда не возвращаются.</p>
+</section>
+
+<section>
+<h2>Ваш промпт</h2>
+<textarea id="user" placeholder="Например: Ты пират. Отвечай с пиратскими словечками."></textarea>
+<p class="hint">Добавляется к базовым правилам. То же можно сказать голосом: «Алиса, системный промпт …».</p>
+</section>
+
+<section>
+<h2>Базовые правила</h2>
+<textarea id="base"></textarea>
+<div class="row"><button id="resetBase" type="button">Вернуть стандартные</button></div>
+<p class="hint">Правила для озвучки: коротко и без разметки. Их стоит менять осторожно.</p>
+</section>
+</main>
+
+<div class="bar"><div><button class="primary" id="save" type="button">Сохранить</button><span id="status"></span></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let data;
+const api = (path, opts = {}) => fetch(path, {...opts, headers: {"Content-Type": "application/json", "X-AIBox": "1"}})
+  .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; });
+
+function render(s) {
+  data = s;
+  const box = $("#providers");
+  box.textContent = "";
+  for (const p of s.providers) {
+    const el = document.createElement("div");
+    el.className = "prov";
+    el.innerHTML = `
+      <div class="head">
+        <label><input type="radio" name="active" style="width:auto"> <span class="t"></span></label>
+        <span class="badge"></span><span class="hint kind"></span>
+      </div>
+      <div class="row"><input class="model" list="" autocomplete="off"><button type="button" class="load">Загрузить список</button></div>
+      <datalist></datalist>
+      <div class="row"><input class="key" type="password" autocomplete="off"></div>`;
+    el.querySelector(".t").textContent = p.title;
+    el.querySelector(".kind").textContent = p.type === "anthropic" ? "Anthropic API" : "OpenAI-совместимый API";
+    const radio = el.querySelector("input[type=radio]");
+    radio.value = p.key; radio.checked = p.key === s.active;
+    const badge = el.querySelector(".badge");
+    badge.textContent = p.has_key ? "ключ задан" : "нет ключа";
+    badge.classList.add(p.has_key ? "ok" : "bad");
+    const model = el.querySelector(".model");
+    model.value = p.model; model.dataset.provider = p.key;
+    const list = el.querySelector("datalist");
+    list.id = "models-" + p.key; model.setAttribute("list", list.id);
+    const key = el.querySelector(".key");
+    key.dataset.env = p.key_env;
+    key.placeholder = p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + p.key_env;
+    el.querySelector(".load").onclick = async ev => {
+      ev.target.disabled = true; status("Загружаю модели " + p.title + "…");
+      try {
+        const ids = await api("/api/models?provider=" + encodeURIComponent(p.key));
+        list.textContent = "";
+        for (const id of ids) { const o = document.createElement("option"); o.value = id; list.append(o); }
+        status(ids.length + " моделей: начните вводить название в поле.");
+        model.focus();
+      } catch (e) { status("Не удалось: " + e.message, true); }
+      ev.target.disabled = false;
+    };
+    box.append(el);
+  }
+  $("#user").value = s.user_prompt;
+  $("#base").value = s.base_prompt || s.default_base_prompt;
+}
+
+function status(text, bad) { const el = $("#status"); el.textContent = text; el.style.color = bad ? "var(--bad)" : ""; }
+
+$("#resetBase").onclick = () => { $("#base").value = data.default_base_prompt; };
+
+$("#save").onclick = async () => {
+  const body = {model_ids: {}, keys: {}};
+  const active = document.querySelector("input[name=active]:checked");
+  if (active) body.active = active.value;
+  for (const m of document.querySelectorAll(".model")) {
+    const orig = data.providers.find(p => p.key === m.dataset.provider).model;
+    if (m.value.trim() && m.value.trim() !== orig) body.model_ids[m.dataset.provider] = m.value.trim();
+  }
+  for (const k of document.querySelectorAll(".key")) if (k.value.trim()) body.keys[k.dataset.env] = k.value.trim();
+  body.user_prompt = $("#user").value;
+  body.base_prompt = $("#base").value;
+  status("Сохраняю…");
+  try { render(await api("/api/settings", {method: "POST", body: JSON.stringify(body)})); status("Сохранено."); }
+  catch (e) { status("Ошибка: " + e.message, true); }
+};
+
+api("/api/settings").then(render).catch(e => status("Ошибка: " + e.message, true));
+</script>
+</body>
+</html>

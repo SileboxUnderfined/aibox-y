@@ -170,3 +170,29 @@ func TestModelAndPrompt(t *testing.T) {
 		t.Fatalf("which model = %q", a)
 	}
 }
+
+func TestPanelApply(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := chats.Open(dir)
+	opt := Options{
+		Models:       map[string]*Model{"deepseek": {Key: "deepseek", Config: providers.Config{Type: "openai", BaseURL: "https://x", Model: "deepseek-chat"}, Completer: &fakeLLM{}}},
+		DefaultModel: "deepseek", StatePath: dir + "/state.json", Store: store,
+	}
+	r := New(opt)
+	base := "Свои правила"
+	if err := r.Apply(Update{ModelIDs: map[string]string{"deepseek": "deepseek-reasoner"}, BasePrompt: &base}); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Settings().Providers[0].Model; got != "deepseek-reasoner" {
+		t.Fatalf("model = %s", got)
+	}
+	bad := "nope"
+	if err := r.Apply(Update{Active: &bad}); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+	opt.Models["deepseek"].Config.Model = "deepseek-chat"
+	r2 := New(opt)
+	if r2.Settings().Providers[0].Model != "deepseek-reasoner" || !strings.HasPrefix(r2.systemPrompt(), "Свои правила") {
+		t.Fatal("panel settings not restored")
+	}
+}

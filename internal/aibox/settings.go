@@ -17,13 +17,16 @@ type Model struct {
 	Key       string
 	Title     string
 	Aliases   []string
+	Config    providers.Config
 	Completer providers.Completer
 }
 
-// state is what voice commands change; it survives restarts.
+// state is what voice commands and the web panel change; it survives restarts.
 type state struct {
-	Model        string `json:"model,omitempty"`
-	SystemPrompt string `json:"system_prompt,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	BasePrompt   string            `json:"base_prompt,omitempty"`
+	ModelIDs     map[string]string `json:"model_ids,omitempty"`
 }
 
 func loadState(path string) state {
@@ -82,7 +85,7 @@ func sortedKeys(models map[string]*Model) []string {
 	return keys
 }
 
-func (m *Model) spoken() string {
+func (m Model) spoken() string {
 	if m.Title != "" {
 		return m.Title
 	}

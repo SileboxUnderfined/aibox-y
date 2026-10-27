@@ -25,6 +25,7 @@ import (
 	"aiboxy/internal/bridge"
 	"aiboxy/internal/chats"
 	"aiboxy/internal/providers"
+	"aiboxy/internal/web"
 )
 
 type Config struct {
@@ -38,7 +39,11 @@ type Config struct {
 	IdleMinutes  int                         `json:"idle_minutes"`
 	MaxHistory   int                         `json:"max_history"`
 	TimeoutSec   int                         `json:"request_timeout_seconds"`
-	Progress     struct {
+	Web          struct {
+		Enabled bool   `json:"enabled"`
+		Listen  string `json:"listen"`
+	} `json:"web"`
+	Progress struct {
 		Enabled    bool `json:"enabled"`
 		AfterMS    int  `json:"after_ms"`
 		IntervalMS int  `json:"interval_ms"`
@@ -51,6 +56,7 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{Listen: "127.0.0.1:8443", Upstream: "wss://uniproxy.alice.yandex.net/uni.ws", Mode: "observe", ChatsDir: "chats"}
+	cfg.Web.Listen = ":8100"
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -107,7 +113,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "provider %s: %v\n", key, err)
 				os.Exit(1)
 			}
-			models[key] = &aibox.Model{Key: key, Title: pc.Title, Aliases: pc.Aliases, Completer: completer}
+			models[key] = &aibox.Model{Key: key, Title: pc.Title, Aliases: pc.Aliases, Config: pc, Completer: completer}
 		}
 		provider := models[cfg.Provider].Completer
 		if *ask != "" {
@@ -158,6 +164,22 @@ func main() {
 			}
 			return n
 		}
+	}
+	if resolver != nil && cfg.Web.Enabled {
+		dir := filepath.Dir(*path)
+		password, err := web.LoadPassword(filepath.Join(dir, "web.password"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "web password:", err)
+			os.Exit(1)
+		}
+		panel := &web.Server{Backend: resolver, SecretsPath: filepath.Join(dir, "secrets.env"), Password: password}
+		go func() {
+			srv := &http.Server{Addr: cfg.Web.Listen, Handler: panel.Handler(), ReadHeaderTimeout: 10 * time.Second}
+			slog.Info("web_panel", "address", cfg.Web.Listen)
+			if err := srv.ListenAndServe(); err != nil {
+				slog.Error("web panel failed", "error", err)
+			}
+		}()
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
