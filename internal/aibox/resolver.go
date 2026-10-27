@@ -179,6 +179,16 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 	if d.Route != "llm" {
 		return bridge.Resolution{Route: "yandex"}, nil
 	}
+	if bridge.Interrupted(ctx) && r.inChat() && stopPhrases.MatchString(cleanText(text)) {
+		// "Алиса, стоп" over an answer only silences it and waits for the next question.
+		r.mu.Lock()
+		if r.active != nil {
+			r.active.lastUsed = r.now()
+		}
+		r.mu.Unlock()
+		slog.Info("chat_answer_stopped")
+		return bridge.Resolution{Route: "llm", Silent: true}, nil
+	}
 	answer, ok := r.handle(ctx, text)
 	if !ok {
 		// Any model failure hands the request to Alice as if AIBox were not there.
