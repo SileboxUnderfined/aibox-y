@@ -177,8 +177,13 @@ func main() {
 		panel := &web.Server{Backend: resolver, SecretsPath: filepath.Join(dir, "secrets.env"), Password: password}
 		go func() {
 			srv := &http.Server{Addr: cfg.Web.Listen, Handler: panel.Handler(), ReadHeaderTimeout: 10 * time.Second}
+			ln, err := listenRetry(cfg.Web.Listen)
+			if err != nil {
+				slog.Error("web panel failed", "error", err)
+				return
+			}
 			slog.Info("web_panel", "address", cfg.Web.Listen)
-			if err := srv.ListenAndServe(); err != nil {
+			if err := srv.Serve(ln); err != nil {
 				slog.Error("web panel failed", "error", err)
 			}
 		}()
@@ -203,8 +208,27 @@ func main() {
 		_ = server.Shutdown(shutdown)
 	}()
 	slog.Info("listening", "address", cfg.Listen, "mode", cfg.Mode, "provider", cfg.Provider)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	ln, err := listenRetry(cfg.Listen)
+	if err != nil {
 		slog.Error("listener failed", "error", err)
 		os.Exit(1)
+	}
+	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("listener failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+// listenRetry waits for the port instead of failing at once: when YAM
+// restarts the service, the previous instance may still hold it briefly.
+func listenRetry(addr string) (net.Listener, error) {
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil || time.Now().After(deadline) {
+			return ln, err
+		}
+		slog.Warn("port_busy_waiting", "address", addr)
+		time.Sleep(2 * time.Second)
 	}
 }

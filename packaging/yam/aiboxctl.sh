@@ -24,8 +24,16 @@ esac
 mount -o remount,rw /
 trap 'sync; mount -o remount,ro /' EXIT HUP INT TERM
 "$package/bin/aibox" -speaker-endpoint "$action" -speaker-config "$cfg" -speaker-backup "$state/endpoint-backup.json"
+guard=/etc/init.d/S99zzaibox-guard
+if [ "$action" = apply ]; then
+ cp "$package/guard.sh" "$guard" && chmod 755 "$guard"
+else
+ [ -f "$guard" ] && sh "$guard" stop
+ rm -f "$guard"
+fi
 sync
 mount -o remount,ro /
 trap - EXIT HUP INT TERM
 /system/vendor/quasar/q restart >/dev/null 2>&1 || true
+[ "$action" = apply ] && sh /etc/init.d/S99zzaibox-guard start
 echo "done: $action, quasar restarted"

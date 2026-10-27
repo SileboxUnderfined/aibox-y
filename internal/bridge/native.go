@@ -501,13 +501,19 @@ func (n *Native) Server(ctx context.Context, k websocket.MessageType, data []byt
 		}
 		if asr.GetEndOfUtt() && len(asr.GetRecognition()) > 0 {
 			r := asr.GetRecognition()[0]
+			var words []string
+			for _, w := range r.GetWords() {
+				words = append(words, w.GetValue())
+			}
+			raw := strings.Join(words, " ")
 			p.text = r.GetNormalized()
-			if p.text == "" {
-				var words []string
-				for _, w := range r.GetWords() {
-					words = append(words, w.GetValue())
-				}
-				p.text = strings.Join(words, " ")
+			normalizedMasked, rawMasked := strings.Contains(p.text, "*"), strings.Contains(raw, "*")
+			// Normalization may mask words the raw hypothesis still has.
+			if p.text == "" || (normalizedMasked && raw != "" && !rawMasked) {
+				p.text = raw
+			}
+			if normalizedMasked || rawMasked {
+				slog.Info("native_asr_masked", "request", requestTag(p.id), "normalized", normalizedMasked, "words", rawMasked, "word_count", len(words))
 			}
 		}
 
