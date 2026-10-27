@@ -1,0 +1,9 @@
+AIBox for Yandex Station
+Licensed under the Apache License, Version 2.0.
+
+The packages under internal/bridge, internal/wire, internal/sound,
+internal/journal, internal/dialogue, internal/llm, internal/playback and
+internal/webaddress, and cmd/aibox/speaker.go, are derived from Quasar Bridge
+(https://github.com/skrashevich/quasar-bridge), Copyright 2026 Sergey Krashevich
+and contributors, Apache License 2.0. Its original notice is in
+NOTICE.quasar-bridge. Third-party dependencies retain their own licenses.

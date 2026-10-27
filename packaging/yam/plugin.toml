@@ -1,0 +1,16 @@
+id = "aibox"
+name = "AIBox"
+version = "0.1.0"
+entry = "start.sh"
+description = "Чаты с нейросетями (DeepSeek, Claude, OpenAI, OpenRouter) по командам Алисы: «новый чат», «продолжить чат …», «поговорить», «забудь чат …». Настройки и ключи: /data/opt/aibox."
+permissions = ["exec"]
+
+[launch]
+kind = "binary"
+mode = "service"
+path = "start.sh"
+interpreter = "sh"
+args = []
+
+[compatibility]
+features = ["arch.aarch64"]
