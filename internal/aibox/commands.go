@@ -23,7 +23,7 @@ const (
 	cmdSetPrompt
 	cmdResetPrompt
 	cmdShowPrompt
-	cmdQuick // "спроси нейросеть X": a new saved chat that starts with question X
+	cmdQuick // "спроси [модель|нейросеть] X": a new saved chat that starts with question X
 )
 
 type command struct {
@@ -35,7 +35,7 @@ var patterns = []struct {
 	kind kind
 	re   *regexp.Regexp
 }{
-	{cmdQuick, regexp.MustCompile(`^` + quickLead + `(?: (.+))?$`)},
+	{cmdQuick, quickPattern},
 	{cmdNew, regexp.MustCompile(`^(?:создай |создать |начни |начать |открой )?нов(?:ый|ой) чат(?: (.+))?$`)},
 	{cmdContinue, regexp.MustCompile(`^(?:продолжи(?:ть|м)?|продолжаем|открой|открыть|вернись в|вернуться в|верни) чат (.+)$`)},
 	{cmdTemporary, regexp.MustCompile(`^(?:давай )?поговори(?:ть|м)(?: со мной)?$`)},
@@ -49,11 +49,9 @@ var patterns = []struct {
 	{cmdSetPrompt, regexp.MustCompile(`^(?:(?:установи |поставь |новый |смени )?системный промпт|(?:установи |новая |смени )роль|твоя роль) (?:на |это )?(.+)$`)},
 }
 
-// quickLead is the start of a quick question, in normalized text.
-const quickLead = `(?:спроси(?:те)?(?: у)?|задай(?:те)? вопрос|вопрос) (?:нейросет[ьи]|нейронк[уеи]|ии)`
-
-// quickPrefix cuts the same start from the recognized text, keeping its case.
-var quickPrefix = regexp.MustCompile(`(?i)^\s*(?:алис[аы]?[\s,.!:—-]+)?(?:спроси(?:те)?(?:\s+у)?|задай(?:те)?\s+вопрос|вопрос)\s+(?:нейросет[ьи]|нейронк[уеи]|ии)[\s,.!:—-]*`)
+// quickPattern starts a quick question, in normalized text. The neuro group
+// marks "спроси нейросеть", which never names a model.
+var quickPattern = regexp.MustCompile(`^(?:(?:спроси(?:те)?|задай(?:те)? вопрос)(?: у)?(?P<neuro> (?:нейросет[ьи]|нейронк[уеи]|ии))?|вопрос(?P<neuro2> (?:нейросет[ьи]|нейронк[уеи]|ии)))(?: (.+))?$`)
 
 var exitPhrases = regexp.MustCompile(`^(?:хватит|стоп|выход|выйти|выйди|пока|закрой чат|закрыть чат|выйди из чата|выйти из чата|заверши чат|завершить чат|конец чата)$`)
 

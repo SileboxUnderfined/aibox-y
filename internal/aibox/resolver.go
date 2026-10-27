@@ -32,6 +32,7 @@ type Options struct {
 
 type session struct {
 	chat      *chats.Chat
+	model     string // key of the model this chat asks, "" for the current one
 	temporary bool
 	lastUsed  time.Time
 }
@@ -214,9 +215,12 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		r.open(&session{chat: chat})
 		return "Продолжаем чат «" + chat.Name + "». Слушаю."
 	case cmdQuick:
-		r.open(&session{chat: &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}})
-		question := quickQuestion(text)
-		if c.name == "" || question == "" {
+		model, question := r.quick(text)
+		r.open(&session{chat: &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}, model: model})
+		if question == "" {
+			if model != "" {
+				return "Новый чат, отвечает " + r.modelFor(model).spoken() + ". Слушаю."
+			}
 			return "Новый чат. Слушаю."
 		}
 		return r.askQuestion(ctx, question)
@@ -249,7 +253,12 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		if m == nil {
 			return "Не знаю модель «" + c.name + "». Есть: " + r.modelNames() + "."
 		}
-		if err := r.update(func(s *state) { s.Model = m.Key }); err != nil {
+		if err := r.update(func(s *state) {
+			s.Model = m.Key
+			if r.active != nil {
+				r.active.model = "" // the open chat follows the switch too
+			}
+		}); err != nil {
 			slog.Warn("state_save_failed")
 		}
 		return "Теперь отвечает " + m.spoken() + "."
@@ -318,8 +327,9 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) string {
 	messages := append(append([]providers.Message{}, history...), providers.Message{Role: "user", Content: question})
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
+	model := r.modelFor(s.model)
 	started := r.now()
-	answer, err := r.model().Completer.Complete(ctx, r.systemPrompt(), messages)
+	answer, err := model.Completer.Complete(ctx, r.systemPrompt(), messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
 	if err != nil {
 		if errors.Is(err, providers.ErrNoKey) {
@@ -347,16 +357,16 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) string {
 	}
 	r.mu.Unlock()
 	if needsName {
-		go r.title(chat, question)
+		go r.title(model, chat, question)
 	}
 	return answer
 }
 
 // title asks the model for a short spoken name for a new chat.
-func (r *Resolver) title(chat *chats.Chat, question string) {
+func (r *Resolver) title(model Model, chat *chats.Chat, question string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	name, err := r.model().Completer.Complete(ctx, "Придумай название для разговора по первому вопросу: одно-три простых русских слова, которые легко произнести. Выведи только название, без кавычек и точки.", []providers.Message{{Role: "user", Content: question}})
+	name, err := model.Completer.Complete(ctx, "Придумай название для разговора по первому вопросу: одно-три простых русских слова, которые легко произнести. Выведи только название, без кавычек и точки.", []providers.Message{{Role: "user", Content: question}})
 	name = strings.Trim(strings.TrimSpace(name), "«»\"'.")
 	if err != nil || name == "" || len([]rune(name)) > 40 {
 		return
@@ -381,13 +391,75 @@ func stripWake(text string) string {
 	return capitalize(q)
 }
 
-// quickQuestion is the question after "спроси нейросеть", as it was recognized.
-func quickQuestion(text string) string {
-	loc := quickPrefix.FindStringIndex(text)
-	if loc == nil {
-		return ""
+// modelFor returns a copy of the model with this key, or the current one.
+func (r *Resolver) modelFor(key string) Model {
+	r.mu.Lock()
+	m, ok := r.opt.Models[key]
+	r.mu.Unlock()
+	if !ok {
+		return r.model()
 	}
-	return capitalize(strings.TrimSpace(text[loc[1]:]))
+	return *m
+}
+
+// quick splits a quick question into the model it names (if any) and the
+// question itself, as it was recognized.
+func (r *Resolver) quick(text string) (model, question string) {
+	cleaned := cleanText(text)
+	m := quickPattern.FindStringSubmatchIndex(cleaned)
+	if m == nil {
+		return "", ""
+	}
+	restStart := m[len(m)-2]
+	if restStart < 0 {
+		restStart = len(cleaned)
+	}
+	skip := len(strings.Fields(chats.Normalize(text))) - len(strings.Fields(cleaned)) + len(strings.Fields(cleaned[:restStart]))
+	rest := strings.Fields(cleaned[restStart:])
+	neuro := m[2] >= 0 || m[4] >= 0
+	if !neuro {
+		if key, n := r.modelPrefix(rest); key != "" {
+			model, skip = key, skip+n
+		}
+	}
+	return model, capitalize(dropWords(text, skip))
+}
+
+// quickModelThreshold is stricter than chat matching, so the first word of
+// a question is not taken for a model name.
+const quickModelThreshold = 0.8
+
+// modelPrefix finds a model named by the first one to three words.
+func (r *Resolver) modelPrefix(words []string) (string, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, used, best := "", 0, quickModelThreshold
+	for n := 1; n <= 3 && n <= len(words); n++ {
+		spoken := strings.Join(words[:n], " ")
+		for _, k := range sortedKeys(r.opt.Models) {
+			m := r.opt.Models[k]
+			for _, name := range append([]string{m.Key, m.Title}, m.Aliases...) {
+				if name == "" {
+					continue
+				}
+				if score := chats.Similarity(spoken, name); score >= best {
+					key, used, best = k, n, score
+				}
+			}
+		}
+	}
+	return key, used
+}
+
+// dropWords removes the first n normalized words from recognized text and
+// keeps the rest as it was said, punctuation included.
+func dropWords(text string, n int) string {
+	fields := strings.Fields(text)
+	for len(fields) > 0 && n > 0 {
+		n -= len(strings.Fields(chats.Normalize(fields[0])))
+		fields = fields[1:]
+	}
+	return strings.TrimLeft(strings.Join(fields, " "), ",.!:;—- ")
 }
 
 func fallbackName(question string) string {

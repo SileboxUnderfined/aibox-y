@@ -304,7 +304,34 @@ func TestQuickQuestion(t *testing.T) {
 	if route, _ := say(t, r, "хватит"); route != "llm" {
 		t.Fatal("bare command should open a chat")
 	}
-	if route, _ := say(t, r, "спроси у мамы рецепт"); route != "yandex" {
-		t.Fatal("other questions go to Alice")
+}
+
+func TestQuickQuestionModel(t *testing.T) {
+	r, deepseek, _ := setup(t)
+	claude := &fakeLLM{name: "claude"}
+	r.opt.Models["claude"] = &Model{Key: "claude", Title: "Claude", Aliases: []string{"клод"}, Completer: claude}
+	if _, a := say(t, r, "Алиса, спроси у клода, что такое квазар"); a != "ответ Что такое квазар" {
+		t.Fatalf("answer = %q", a)
 	}
+	say(t, r, "а пульсар?")
+	if n := len(claude.calls); n < 2 {
+		t.Fatalf("claude calls = %d", n)
+	}
+	for _, c := range deepseek.calls {
+		if c[len(c)-1].Content != "Что такое квазар" { // only the title may go elsewhere
+			t.Fatalf("default model asked %q", c[len(c)-1].Content)
+		}
+	}
+	if r.CurrentModel() != "deepseek" {
+		t.Fatal("quick question changed the default model")
+	}
+	say(t, r, "хватит")
+	if _, a := say(t, r, "спроси почему трава зеленая"); a != "ответ Почему трава зеленая" {
+		t.Fatalf("bare спроси = %q", a)
+	}
+	say(t, r, "хватит")
+	if _, a := say(t, r, "спроси клод"); !strings.Contains(a, "Claude") {
+		t.Fatalf("model without question = %q", a)
+	}
+	time.Sleep(50 * time.Millisecond) // let title goroutines finish before cleanup
 }
