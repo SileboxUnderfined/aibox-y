@@ -213,6 +213,13 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		}
 		r.open(&session{chat: chat})
 		return "Продолжаем чат «" + chat.Name + "». Слушаю."
+	case cmdQuick:
+		r.open(&session{chat: &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}})
+		question := quickQuestion(text)
+		if c.name == "" || question == "" {
+			return "Новый чат. Слушаю."
+		}
+		return r.askQuestion(ctx, question)
 	case cmdTemporary:
 		r.open(&session{chat: &chats.Chat{ID: chats.NewID()}, temporary: true})
 		return "Давай поговорим. Этот разговор я не сохраню."
@@ -294,13 +301,16 @@ func (r *Resolver) listText() string {
 }
 
 func (r *Resolver) ask(ctx context.Context, text string) string {
+	return r.askQuestion(ctx, stripWake(text))
+}
+
+func (r *Resolver) askQuestion(ctx context.Context, question string) string {
 	r.mu.Lock()
 	s := r.active
 	r.mu.Unlock()
 	if s == nil {
 		return "Чат закрыт. Скажите «новый чат» или «поговорить»."
 	}
-	question := stripWake(text)
 	history := s.chat.Messages
 	if len(history) > r.opt.MaxHistory {
 		history = history[len(history)-r.opt.MaxHistory:]
@@ -369,6 +379,15 @@ func stripWake(text string) string {
 		return text
 	}
 	return capitalize(q)
+}
+
+// quickQuestion is the question after "спроси нейросеть", as it was recognized.
+func quickQuestion(text string) string {
+	loc := quickPrefix.FindStringIndex(text)
+	if loc == nil {
+		return ""
+	}
+	return capitalize(strings.TrimSpace(text[loc[1]:]))
 }
 
 func fallbackName(question string) string {

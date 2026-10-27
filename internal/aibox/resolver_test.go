@@ -255,3 +255,56 @@ func TestStripWakeAndUncensored(t *testing.T) {
 		t.Fatal("not uncensored inside a chat")
 	}
 }
+
+func TestQuickQuestion(t *testing.T) {
+	r, llm, store := setup(t)
+	titled := func(n int) []*chats.Chat {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			list, _ := store.List()
+			done := 0
+			for _, c := range list {
+				if strings.HasPrefix(c.Name, "Космос") {
+					done++
+				}
+			}
+			if len(list) == n && done == n {
+				return list
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("chats not titled: %+v", list)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	route, a := say(t, r, "Алиса, спроси нейросеть, почему небо голубое?")
+	if route != "llm" || a != "ответ Почему небо голубое?" {
+		t.Fatalf("route = %s, answer = %q", route, a)
+	}
+	titled(1)
+	if _, a := say(t, r, "а ночью?"); a != "ответ а ночью?" {
+		t.Fatalf("follow-up = %q", a)
+	}
+	if len(llm.calls[len(llm.calls)-1]) != 3 {
+		t.Fatal("follow-up lost the quick question")
+	}
+	say(t, r, "хватит")
+	if list := titled(1); len(list[0].Messages) != 4 {
+		t.Fatalf("saved chat = %+v", list[0])
+	}
+	if _, a := say(t, r, "Задай вопрос нейросети: сколько лет Луне"); a != "ответ Сколько лет Луне" {
+		t.Fatalf("variant = %q", a)
+	}
+	titled(2)
+	say(t, r, "хватит")
+	if _, a := say(t, r, "спроси нейросеть"); a != "Новый чат. Слушаю." {
+		t.Fatalf("empty question = %q", a)
+	}
+	if route, _ := say(t, r, "хватит"); route != "llm" {
+		t.Fatal("bare command should open a chat")
+	}
+	if route, _ := say(t, r, "спроси у мамы рецепт"); route != "yandex" {
+		t.Fatal("other questions go to Alice")
+	}
+}
