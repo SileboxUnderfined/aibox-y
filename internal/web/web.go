@@ -186,8 +186,9 @@ func (s *Server) saveKeys(keys map[string]string) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	allowed := map[string]bool{}
-	for _, p := range s.Backend.Settings().Providers {
+	settings := s.Backend.Settings()
+	allowed := map[string]bool{settings.SearchKeyEnv: true}
+	for _, p := range settings.Providers {
 		allowed[p.KeyEnv] = true
 	}
 	for env, value := range keys {

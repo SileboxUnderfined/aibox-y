@@ -28,6 +28,10 @@ type state struct {
 	BasePrompt   string            `json:"base_prompt,omitempty"`
 	ModelIDs     map[string]string `json:"model_ids,omitempty"`
 	Custom       []CustomProvider  `json:"custom_providers,omitempty"`
+	// SearchOff turns web search off for every model.
+	SearchOff bool `json:"search_off,omitempty"`
+	// SearchModes is per model: "auto" (default), "tool", "native" or "off".
+	SearchModes map[string]string `json:"search_modes,omitempty"`
 }
 
 func loadState(path string) state {

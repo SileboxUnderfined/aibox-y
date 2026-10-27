@@ -362,3 +362,74 @@ func TestModelFailureFallsBackToAlice(t *testing.T) {
 		t.Fatalf("failed answers saved: %+v", list)
 	}
 }
+
+type searchLLM struct {
+	fakeLLM
+	modes []string
+}
+
+func (f *searchLLM) Complete(ctx context.Context, system string, m []providers.Message) (string, error) {
+	f.modes = append(f.modes, providers.SearchMode(ctx))
+	return f.fakeLLM.Complete(ctx, system, m)
+}
+
+type fakeSearcher struct{ ready bool }
+
+func (f *fakeSearcher) Search(context.Context, string) (string, error) { return "", nil }
+func (f *fakeSearcher) Ready() bool                                    { return f.ready }
+func (f *fakeSearcher) KeyEnv() string                                 { return "TAVILY_API_KEY" }
+
+func TestSearchModes(t *testing.T) {
+	store, _ := chats.Open(t.TempDir())
+	deepseek, claude := &searchLLM{}, &searchLLM{}
+	searcher := &fakeSearcher{}
+	r := New(Options{Models: map[string]*Model{
+		"deepseek": {Key: "deepseek", Title: "DeepSeek", Config: providers.Config{BaseURL: "https://api.deepseek.com/v1"}, Completer: deepseek},
+		"claude":   {Key: "claude", Title: "Claude", Aliases: []string{"клод"}, Config: providers.Config{Type: "anthropic"}, Completer: claude},
+	}, DefaultModel: "deepseek", Store: store, Search: searcher})
+
+	say(t, r, "Алиса, поговорим")
+	say(t, r, "какая погода")
+	if deepseek.modes[0] != "" {
+		t.Fatalf("DeepSeek without a search key searched: %q", deepseek.modes[0])
+	}
+	if strings.Contains(deepseek.systems[0], "поиск в интернете") {
+		t.Fatal("search prompt added without search")
+	}
+	say(t, r, "переключись на клод")
+	say(t, r, "какая погода")
+	if claude.modes[0] != providers.SearchNative {
+		t.Fatalf("Claude without a key should use its own search, got %q", claude.modes[0])
+	}
+	if !strings.Contains(claude.systems[0], "Сегодня ") {
+		t.Fatal("no date in the search prompt")
+	}
+	searcher.ready = true
+	say(t, r, "а завтра")
+	if claude.modes[1] != providers.SearchTool {
+		t.Fatalf("with a key auto should use our search, got %q", claude.modes[1])
+	}
+	if err := r.Apply(Update{SearchModes: map[string]string{"claude": "native"}}); err != nil {
+		t.Fatal(err)
+	}
+	say(t, r, "а послезавтра")
+	if claude.modes[2] != providers.SearchNative {
+		t.Fatalf("native setting ignored: %q", claude.modes[2])
+	}
+	if _, answer := say(t, r, "выключи интернет"); !strings.Contains(answer, "Выключила") {
+		t.Fatalf("answer = %q", answer)
+	}
+	say(t, r, "ещё вопрос")
+	if claude.modes[3] != "" {
+		t.Fatalf("search still on: %q", claude.modes[3])
+	}
+	if r.Settings().SearchOn {
+		t.Fatal("panel shows search on")
+	}
+	if _, answer := say(t, r, "включи интернет"); !strings.Contains(answer, "Включила") {
+		t.Fatalf("answer = %q", answer)
+	}
+	if err := r.Apply(Update{SearchModes: map[string]string{"claude": "warp"}}); err == nil {
+		t.Fatal("bad mode accepted")
+	}
+}

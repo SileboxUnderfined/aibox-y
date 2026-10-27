@@ -129,6 +129,7 @@ func (r *Resolver) RemoveProvider(key string) (string, error) {
 	r.state.Custom = append(r.state.Custom[:index], r.state.Custom[index+1:]...)
 	delete(r.opt.Models, key)
 	delete(r.state.ModelIDs, key)
+	delete(r.state.SearchModes, key)
 	if r.state.Model == key {
 		r.state.Model = r.opt.DefaultModel
 	}

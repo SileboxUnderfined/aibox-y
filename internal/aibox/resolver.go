@@ -28,6 +28,14 @@ type Options struct {
 	RequestTimeout time.Duration
 	// KeepAntimat leaves Yandex's profanity masking on inside chats.
 	KeepAntimat bool
+	// Search runs our web_search tool; nil leaves only providers' own search.
+	Search WebSearcher
+}
+
+type WebSearcher interface {
+	providers.Searcher
+	Ready() bool
+	KeyEnv() string
 }
 
 type session struct {
@@ -288,6 +296,18 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 			slog.Warn("state_save_failed")
 		}
 		return "Вернула обычный системный промпт.", true
+	case cmdSearchOn, cmdSearchOff:
+		off := c.kind == cmdSearchOff
+		if err := r.update(func(s *state) { s.SearchOff = off }); err != nil {
+			slog.Warn("state_save_failed")
+		}
+		if off {
+			return "Выключила нейросетям интернет.", true
+		}
+		if r.searchFor(r.model()).Mode == "" {
+			return "Включила интернет, но у " + r.model().spoken() + " поиска пока нет: нужен ключ поисковика в веб-панели.", true
+		}
+		return "Включила нейросетям интернет.", true
 	case cmdShowPrompt:
 		r.mu.Lock()
 		custom := r.state.SystemPrompt
@@ -341,9 +361,15 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
 	model := r.modelFor(s.model)
+	system := r.systemPrompt()
+	search := r.searchFor(model)
+	if search.Mode != "" {
+		ctx = providers.WithSearch(ctx, search)
+		system += "\n\n" + searchPrompt(r.now())
+	}
 	started := r.now()
-	answer, err := model.Completer.Complete(ctx, r.systemPrompt(), messages)
-	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
+	answer, err := model.Completer.Complete(ctx, system, messages)
+	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer), "search", search.Mode)
 	if err == nil && strings.TrimSpace(answer) == "" {
 		err = errors.New("empty answer")
 	}

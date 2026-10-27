@@ -52,6 +52,13 @@ code{font-size:12px}
 </section>
 
 <section>
+<h2>Интернет</h2>
+<div class="head"><label><input type="checkbox" id="searchOn" style="width:auto"> Разрешить нейросетям искать в интернете</label><span class="badge" id="searchBadge"></span></div>
+<div class="row"><input id="searchKey" type="password" autocomplete="off"></div>
+<p class="hint">Ключ Tavily (бесплатно до 1000 запросов в месяц на <code>tavily.com</code>) даёт поиск любой модели, включая DeepSeek. Без него ищут только модели со своим поиском: ChatGPT, Claude и OpenRouter, это дороже. У каждой модели способ можно выбрать ниже. Голосом: «Алиса, включи интернет» или «выключи интернет».</p>
+</section>
+
+<section>
 <h2 id="formTitle">Добавить свой API</h2>
 <div class="grid">
 <label>Название<input id="cpTitle" placeholder="Например: Groq"></label>
@@ -102,7 +109,8 @@ function render(s) {
       </div>
       <div class="row"><input class="model" list="" autocomplete="off"><button type="button" class="load">Загрузить список</button></div>
       <datalist></datalist>
-      <div class="row"><input class="key" type="password" autocomplete="off"></div>`;
+      <div class="row"><input class="key" type="password" autocomplete="off"></div>
+      <div class="row"><select class="search"></select></div>`;
     el.querySelector(".t").textContent = p.title;
     el.querySelector(".kind").textContent = (p.type === "anthropic" ? "Anthropic API" : "OpenAI-совместимый API") + (p.custom ? " · " + p.base_url : "");
     if (p.custom) {
@@ -129,6 +137,16 @@ function render(s) {
     const key = el.querySelector(".key");
     key.dataset.env = p.key_env;
     key.placeholder = p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + p.key_env;
+    const search = el.querySelector(".search");
+    search.dataset.provider = p.key;
+    const modes = [["auto", "Интернет: автоматически"], ["tool", "Интернет: через Tavily"], ["native", "Интернет: свой поиск провайдера"], ["off", "Интернет: выключен"]];
+    for (const [v, t] of modes) {
+      if (v === "native" && !p.native_search) continue;
+      const o = document.createElement("option"); o.value = v; o.textContent = t; search.append(o);
+    }
+    search.value = p.search_mode;
+    const now = {tool: "сейчас ищет через Tavily", native: "сейчас ищет своим поиском"}[p.search] || "сейчас без интернета";
+    el.querySelector(".kind").textContent += " · " + now;
     el.querySelector(".load").onclick = async ev => {
       ev.target.disabled = true; status("Загружаю модели " + p.title + "…");
       try {
@@ -142,6 +160,13 @@ function render(s) {
     };
     box.append(el);
   }
+  $("#searchOn").checked = s.search_on;
+  const sk = $("#searchKey");
+  sk.dataset.env = s.search_key_env; sk.value = "";
+  sk.placeholder = s.search_has_key ? "Новый ключ Tavily (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + s.search_key_env;
+  const sb = $("#searchBadge");
+  sb.textContent = s.search_has_key ? "ключ задан" : "нет ключа";
+  sb.className = "badge " + (s.search_has_key ? "ok" : "bad");
   $("#user").value = s.user_prompt;
   $("#base").value = s.base_prompt || s.default_base_prompt;
 }
@@ -184,6 +209,13 @@ $("#save").onclick = async () => {
     if (m.value.trim() && m.value.trim() !== orig) body.model_ids[m.dataset.provider] = m.value.trim();
   }
   for (const k of document.querySelectorAll(".key")) if (k.value.trim()) body.keys[k.dataset.env] = k.value.trim();
+  if ($("#searchKey").value.trim()) body.keys[$("#searchKey").dataset.env] = $("#searchKey").value.trim();
+  body.search_on = $("#searchOn").checked;
+  body.search_modes = {};
+  for (const sel of document.querySelectorAll(".search")) {
+    const orig = data.providers.find(p => p.key === sel.dataset.provider).search_mode;
+    if (sel.value !== orig) body.search_modes[sel.dataset.provider] = sel.value;
+  }
   body.user_prompt = $("#user").value;
   body.base_prompt = $("#base").value;
   status("Сохраняю…");
