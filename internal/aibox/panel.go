@@ -16,8 +16,11 @@ type ProviderInfo struct {
 	Title  string `json:"title"`
 	Type   string `json:"type"`
 	Model  string `json:"model"`
-	KeyEnv string `json:"key_env"`
-	HasKey bool   `json:"has_key"`
+	KeyEnv  string   `json:"key_env"`
+	HasKey  bool     `json:"has_key"`
+	BaseURL string   `json:"base_url"`
+	Aliases []string `json:"aliases"`
+	Custom  bool     `json:"custom"`
 }
 
 type Settings struct {
@@ -42,7 +45,7 @@ func (r *Resolver) Settings() Settings {
 	s := Settings{Active: r.state.Model, UserPrompt: r.state.SystemPrompt, BasePrompt: r.state.BasePrompt, DefaultBasePrompt: r.opt.SystemPrompt}
 	for _, key := range sortedKeys(r.opt.Models) {
 		m := r.opt.Models[key]
-		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != ""})
+		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != "", BaseURL: m.Config.BaseURL, Aliases: m.Aliases, Custom: r.isCustom(key) >= 0})
 	}
 	return s
 }

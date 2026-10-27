@@ -27,6 +27,7 @@ type state struct {
 	SystemPrompt string            `json:"system_prompt,omitempty"`
 	BasePrompt   string            `json:"base_prompt,omitempty"`
 	ModelIDs     map[string]string `json:"model_ids,omitempty"`
+	Custom       []CustomProvider  `json:"custom_providers,omitempty"`
 }
 
 func loadState(path string) state {

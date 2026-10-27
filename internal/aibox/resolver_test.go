@@ -196,3 +196,46 @@ func TestPanelApply(t *testing.T) {
 		t.Fatal("panel settings not restored")
 	}
 }
+
+func TestCustomProvider(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := chats.Open(dir)
+	opt := Options{
+		Models:       map[string]*Model{"deepseek": {Key: "deepseek", Title: "DeepSeek", Completer: &fakeLLM{}}},
+		DefaultModel: "deepseek", StatePath: dir + "/state.json", Store: store,
+	}
+	r := New(opt)
+	if _, err := r.SaveProvider(CustomProvider{Title: "Groq", BaseURL: "ftp://x", Model: "m"}); err == nil {
+		t.Fatal("bad URL accepted")
+	}
+	c, err := r.SaveProvider(CustomProvider{Title: "Groq", BaseURL: "https://api.groq.com/openai/v1/", Model: "llama", Aliases: []string{" грок ", ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Key != "api-1" || c.KeyEnv() != "AIBOX_KEY_API_1" || c.BaseURL != "https://api.groq.com/openai/v1" || len(c.Aliases) != 1 {
+		t.Fatalf("saved = %+v", c)
+	}
+	if _, a := say(t, r, "переключись на грок"); !strings.Contains(a, "Groq") {
+		t.Fatalf("switch = %q", a)
+	}
+	// Restored after restart, then edited and removed.
+	opt.Models = map[string]*Model{"deepseek": opt.Models["deepseek"]}
+	r2 := New(opt)
+	if r2.CurrentModel() != "api-1" {
+		t.Fatalf("custom provider not restored: %s", r2.CurrentModel())
+	}
+	c.Model = "llama-2"
+	if _, err := r2.SaveProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r2.SaveProvider(CustomProvider{Key: "deepseek", Title: "x", BaseURL: "https://x", Model: "m"}); err == nil {
+		t.Fatal("built-in provider overwritten")
+	}
+	if _, err := r2.RemoveProvider("deepseek"); err == nil {
+		t.Fatal("built-in provider removed")
+	}
+	env, err := r2.RemoveProvider("api-1")
+	if err != nil || env != "AIBOX_KEY_API_1" || r2.CurrentModel() != "deepseek" {
+		t.Fatalf("remove: %s %v %s", env, err, r2.CurrentModel())
+	}
+}

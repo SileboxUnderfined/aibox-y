@@ -26,6 +26,8 @@ type Backend interface {
 	Settings() aibox.Settings
 	Apply(aibox.Update) error
 	ListModels(ctx context.Context, provider string) ([]string, error)
+	SaveProvider(aibox.CustomProvider) (aibox.CustomProvider, error)
+	RemoveProvider(key string) (string, error)
 }
 
 type Server struct {
@@ -59,6 +61,19 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, s.Backend.Settings())
 	})
 	mux.HandleFunc("POST /api/settings", s.save)
+	mux.HandleFunc("POST /api/providers", s.saveProvider)
+	mux.HandleFunc("DELETE /api/providers/{key}", func(w http.ResponseWriter, r *http.Request) {
+		env, err := s.Backend.RemoveProvider(r.PathValue("key"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.dropKey(env); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "не удалось удалить ключ"})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.Backend.Settings())
+	})
 	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
@@ -81,7 +96,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		// Settings change state: refuse requests from other sites' pages.
-		if r.Method == http.MethodPost && r.Header.Get("X-AIBox") != "1" {
+		if r.Method != http.MethodGet && r.Header.Get("X-AIBox") != "1" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -109,6 +124,58 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.Backend.Settings())
+}
+
+type providerRequest struct {
+	aibox.CustomProvider
+	APIKey string `json:"api_key,omitempty"`
+}
+
+func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
+	var req providerRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
+		return
+	}
+	key := strings.TrimSpace(req.APIKey)
+	if key != "" && !keyValue.MatchString(key) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ключ содержит недопустимые символы"})
+		return
+	}
+	saved, err := s.Backend.SaveProvider(req.CustomProvider)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.saveKeys(map[string]string{saved.KeyEnv(): key}); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Backend.Settings())
+}
+
+// dropKey removes a deleted provider's key from secrets.env and the process.
+func (s *Server) dropKey(env string) error {
+	_ = os.Unsetenv(env)
+	data, err := os.ReadFile(s.SecretsPath)
+	if err != nil {
+		return nil
+	}
+	var kept []string
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), env+"=") {
+			kept = append(kept, line)
+		}
+	}
+	return s.writeSecrets(kept)
+}
+
+func (s *Server) writeSecrets(lines []string) error {
+	tmp := filepath.Join(filepath.Dir(s.SecretsPath), ".secrets.tmp")
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.SecretsPath)
 }
 
 // A key ends up in a file the start script sources with sh, so only plain
@@ -151,11 +218,7 @@ func (s *Server) saveKeys(keys map[string]string) error {
 			lines = append(lines, entry)
 		}
 	}
-	tmp := filepath.Join(filepath.Dir(s.SecretsPath), ".secrets.tmp")
-	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, s.SecretsPath); err != nil {
+	if err := s.writeSecrets(lines); err != nil {
 		return err
 	}
 	for env, value := range keys {

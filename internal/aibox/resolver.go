@@ -57,6 +57,18 @@ func New(opt Options) *Resolver {
 		opt.RequestTimeout = 40 * time.Second
 	}
 	r := &Resolver{opt: opt, now: time.Now, state: loadState(opt.StatePath)}
+	if opt.Models == nil {
+		opt.Models = map[string]*Model{}
+		r.opt.Models = opt.Models
+	}
+	for _, cp := range r.state.Custom {
+		m, err := cp.model()
+		if err != nil {
+			slog.Warn("custom_provider_rejected", "provider", cp.Key)
+			continue
+		}
+		opt.Models[cp.Key] = m
+	}
 	if _, ok := opt.Models[r.state.Model]; !ok {
 		r.state.Model = opt.DefaultModel
 	}
@@ -75,6 +87,24 @@ func (r *Resolver) model() Model {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return *r.opt.Models[r.state.Model]
+}
+
+// find returns a copy of the model named by speech, or nil.
+func (r *Resolver) find(spoken string) *Model {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m := findModel(r.opt.Models, spoken)
+	if m == nil {
+		return nil
+	}
+	c := *m
+	return &c
+}
+
+func (r *Resolver) modelNames() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return modelList(r.opt.Models)
 }
 
 // CurrentModel is the key of the model that answers now.
@@ -119,7 +149,7 @@ func (r *Resolver) inChat() bool {
 func (r *Resolver) Decide(_ context.Context, text string) bridge.RouteDecision {
 	inChat := r.inChat()
 	c := parse(text, inChat)
-	if c.kind == cmdModelSwitch && findModel(r.opt.Models, c.name) == nil {
+	if c.kind == cmdModelSwitch && r.find(c.name) == nil {
 		c.kind = cmdNone
 	}
 	if c.kind != cmdNone {
@@ -145,7 +175,7 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 
 func (r *Resolver) handle(ctx context.Context, text string) string {
 	c := parse(text, r.inChat())
-	if c.kind == cmdModelSwitch && findModel(r.opt.Models, c.name) == nil {
+	if c.kind == cmdModelSwitch && r.find(c.name) == nil {
 		c.kind = cmdNone
 	}
 	slog.Info("chat_command", "kind", int(c.kind))
@@ -199,16 +229,16 @@ func (r *Resolver) handle(ctx context.Context, text string) string {
 		r.mu.Unlock()
 		return "Выхожу из чата."
 	case cmdModel, cmdModelSwitch:
-		m := findModel(r.opt.Models, c.name)
+		m := r.find(c.name)
 		if m == nil {
-			return "Не знаю модель «" + c.name + "». Есть: " + modelList(r.opt.Models) + "."
+			return "Не знаю модель «" + c.name + "». Есть: " + r.modelNames() + "."
 		}
 		if err := r.update(func(s *state) { s.Model = m.Key }); err != nil {
 			slog.Warn("state_save_failed")
 		}
 		return "Теперь отвечает " + m.spoken() + "."
 	case cmdWhichModel:
-		return "Сейчас отвечает " + r.model().spoken() + ". Можно выбрать: " + modelList(r.opt.Models) + "."
+		return "Сейчас отвечает " + r.model().spoken() + ". Можно выбрать: " + r.modelNames() + "."
 	case cmdSetPrompt:
 		prompt := capitalize(c.name)
 		if err := r.update(func(s *state) { s.SystemPrompt = prompt }); err != nil {

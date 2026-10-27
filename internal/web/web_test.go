@@ -12,10 +12,25 @@ import (
 	"aiboxy/internal/aibox"
 )
 
-type fake struct{ applied []aibox.Update }
+type fake struct {
+	applied []aibox.Update
+	custom  bool
+}
 
 func (f *fake) Settings() aibox.Settings {
-	return aibox.Settings{Providers: []aibox.ProviderInfo{{Key: "deepseek", KeyEnv: "AIBOX_TEST_KEY"}}}
+	s := aibox.Settings{Providers: []aibox.ProviderInfo{{Key: "deepseek", KeyEnv: "AIBOX_TEST_KEY"}}}
+	if f.custom {
+		s.Providers = append(s.Providers, aibox.ProviderInfo{Key: "api-1", KeyEnv: "AIBOX_KEY_API_1", Custom: true})
+	}
+	return s
+}
+func (f *fake) SaveProvider(c aibox.CustomProvider) (aibox.CustomProvider, error) {
+	c.Key, f.custom = "api-1", true
+	return c, nil
+}
+func (f *fake) RemoveProvider(string) (string, error) {
+	f.custom = false
+	return "AIBOX_KEY_API_1", nil
 }
 func (f *fake) Apply(u aibox.Update) error { f.applied = append(f.applied, u); return nil }
 func (f *fake) ListModels(context.Context, string) ([]string, error) {
@@ -72,5 +87,28 @@ func TestPanel(t *testing.T) {
 	}
 	if rec := do(h, "GET", "/api/models?provider=deepseek", "", "pw", false); !strings.Contains(rec.Body.String(), `"a"`) {
 		t.Fatalf("models: %s", rec.Body)
+	}
+}
+
+func TestCustomProviderKeys(t *testing.T) {
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "secrets.env")
+	h := (&Server{Backend: &fake{}, SecretsPath: secrets, Password: "pw"}).Handler()
+	if rec := do(h, "POST", "/api/providers", `{"title":"Groq","api_key":"gsk_abcdefgh123"}`, "pw", true); rec.Code != 200 {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	data, _ := os.ReadFile(secrets)
+	if !strings.Contains(string(data), "AIBOX_KEY_API_1='gsk_abcdefgh123'") || os.Getenv("AIBOX_KEY_API_1") == "" {
+		t.Fatalf("key not stored: %q", data)
+	}
+	if rec := do(h, "DELETE", "/api/providers/api-1", "", "pw", false); rec.Code != 403 {
+		t.Fatalf("unmarked delete: %d", rec.Code)
+	}
+	if rec := do(h, "DELETE", "/api/providers/api-1", "", "pw", true); rec.Code != 200 {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	data, _ = os.ReadFile(secrets)
+	if strings.Contains(string(data), "AIBOX_KEY_API_1") || os.Getenv("AIBOX_KEY_API_1") != "" {
+		t.Fatalf("key left behind: %q", data)
 	}
 }

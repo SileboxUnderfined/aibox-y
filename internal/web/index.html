@@ -28,6 +28,13 @@ textarea{min-height:110px;resize:vertical}
 button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 12px;cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .hint{color:var(--muted);font-size:13px;margin:6px 0 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.grid .wide{grid-column:1/-1}
+@media (max-width:520px){.grid{grid-template-columns:1fr}}
+select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+code{font-size:12px}
+.mine{font-size:12px;color:var(--accent)}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:12px 16px}
 .bar div{max-width:720px;margin:0 auto;display:flex;gap:12px;align-items:center}
 #status{color:var(--muted)}
@@ -42,6 +49,20 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 <h2>Модель</h2>
 <div id="providers">Загрузка…</div>
 <p class="hint">Отмеченный провайдер отвечает в чатах. Ключи хранятся только на колонке и сюда не возвращаются.</p>
+</section>
+
+<section>
+<h2 id="formTitle">Добавить свой API</h2>
+<div class="grid">
+<label>Название<input id="cpTitle" placeholder="Например: Groq"></label>
+<label>Тип API<select id="cpType"><option value="openai">OpenAI-совместимый</option><option value="anthropic">Anthropic</option></select></label>
+<label class="wide">Адрес API<input id="cpURL" placeholder="https://api.groq.com/openai/v1"></label>
+<label>Модель<input id="cpModel" placeholder="llama-3.3-70b-versatile"></label>
+<label>Ключ<input id="cpKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если не нужен"></label>
+<label class="wide">Как называть голосом<input id="cpAliases" placeholder="грок, грук"></label>
+</div>
+<div class="row"><button class="primary" id="cpSave" type="button">Добавить</button><button id="cpCancel" type="button" hidden>Отмена</button></div>
+<p class="hint">Адрес — до <code>/v1</code>, без <code>/chat/completions</code>. Подойдут Groq, Together, Mistral, Ollama или LM Studio в локальной сети и любые другие с OpenAI-совместимым API. Потом: «Алиса, переключись на …».</p>
 </section>
 
 <section>
@@ -77,12 +98,25 @@ function render(s) {
       <div class="head">
         <label><input type="radio" name="active" style="width:auto"> <span class="t"></span></label>
         <span class="badge"></span><span class="hint kind"></span>
+        <span class="tools" style="margin-left:auto;display:flex;gap:6px"></span>
       </div>
       <div class="row"><input class="model" list="" autocomplete="off"><button type="button" class="load">Загрузить список</button></div>
       <datalist></datalist>
       <div class="row"><input class="key" type="password" autocomplete="off"></div>`;
     el.querySelector(".t").textContent = p.title;
-    el.querySelector(".kind").textContent = p.type === "anthropic" ? "Anthropic API" : "OpenAI-совместимый API";
+    el.querySelector(".kind").textContent = (p.type === "anthropic" ? "Anthropic API" : "OpenAI-совместимый API") + (p.custom ? " · " + p.base_url : "");
+    if (p.custom) {
+      const tools = el.querySelector(".tools");
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Изменить";
+      edit.onclick = () => fillForm(p);
+      const del = document.createElement("button"); del.type = "button"; del.textContent = "Удалить";
+      del.onclick = async () => {
+        if (!confirm("Удалить " + p.title + " вместе с его ключом?")) return;
+        try { render(await api("/api/providers/" + encodeURIComponent(p.key), {method: "DELETE"})); status("Удалено."); }
+        catch (e) { status("Ошибка: " + e.message, true); }
+      };
+      tools.append(edit, del);
+    }
     const radio = el.querySelector("input[type=radio]");
     radio.value = p.key; radio.checked = p.key === s.active;
     const badge = el.querySelector(".badge");
@@ -113,6 +147,31 @@ function render(s) {
 }
 
 function status(text, bad) { const el = $("#status"); el.textContent = text; el.style.color = bad ? "var(--bad)" : ""; }
+
+let editing = "";
+function fillForm(p) {
+  editing = p ? p.key : "";
+  $("#cpTitle").value = p ? p.title : "";
+  $("#cpType").value = p ? p.type : "openai";
+  $("#cpURL").value = p ? p.base_url : "";
+  $("#cpModel").value = p ? p.model : "";
+  $("#cpAliases").value = p ? (p.aliases || []).join(", ") : "";
+  $("#cpKey").value = "";
+  $("#cpKey").placeholder = p && p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Оставьте пустым, если не нужен";
+  $("#formTitle").textContent = p ? "Изменить " + p.title : "Добавить свой API";
+  $("#cpSave").textContent = p ? "Сохранить API" : "Добавить";
+  $("#cpCancel").hidden = !p;
+  if (p) $("#formTitle").scrollIntoView({behavior: "smooth"});
+}
+$("#cpCancel").onclick = () => fillForm(null);
+$("#cpSave").onclick = async () => {
+  const body = {key: editing, title: $("#cpTitle").value, type: $("#cpType").value, base_url: $("#cpURL").value,
+    model: $("#cpModel").value, api_key: $("#cpKey").value.trim(),
+    aliases: $("#cpAliases").value.split(",").map(a => a.trim()).filter(Boolean)};
+  status("Сохраняю API…");
+  try { render(await api("/api/providers", {method: "POST", body: JSON.stringify(body)})); fillForm(null); status("API сохранён. Выберите его в списке моделей и нажмите «Сохранить»."); }
+  catch (e) { status("Ошибка: " + e.message, true); }
+};
 
 $("#resetBase").onclick = () => { $("#base").value = data.default_base_prompt; };
 
