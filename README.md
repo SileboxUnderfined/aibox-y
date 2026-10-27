@@ -1,5 +1,7 @@
 # AIBox для Яндекс Станции
 
+> Неофициальный проект энтузиаста. Не связан с ООО «Яндекс», не одобрен и не поддерживается им. Подробности в разделе [Правовая информация](#правовая-информация).
+
 Чаты с нейросетями (DeepSeek, Claude, OpenAI, OpenRouter) прямо с колонки, по командам Алисы. Ключи API хранятся на самой Станции, запросы к провайдерам идут с неё.
 
 | Команда | Что делает |
@@ -56,3 +58,19 @@ tar czf - -C dist aibox-pkg | ssh -p 2222 root@<ip> 'cd /tmp && gzip -dc | tar x
 ```bash
 go test ./...
 ```
+
+## Правовая информация
+
+**Неофициальный проект.** AIBox написан независимым разработчиком и не связан с ООО «Яндекс» и его аффилированными лицами, не одобрен, не спонсирован и не поддерживается ими. «Яндекс», «Яндекс Станция», «Алиса», «Quasar» и связанные обозначения являются товарными знаками их правообладателей и упоминаются только для описания совместимости. Названия DeepSeek, Claude, OpenAI, OpenRouter и других сервисов принадлежат их владельцам.
+
+**Что есть в репозитории.** Только собственный исходный код, производный код [Quasar Bridge](https://github.com/skrashevich/quasar-bridge) под Apache 2.0 (см. `NOTICE`) и примеры конфигурации. Здесь нет прошивки, бинарных файлов, исходного кода, ключей, токенов или иных секретов Яндекса, и нет инструментов для получения root-доступа. Проект не обходит платные подписки, DRM и ограничения доступа к контенту, не даёт доступа к чужим аккаунтам и устройствам. Сборки с файлами прошивки Яндекса не публикуются.
+
+**Назначение.** Проект создан для личного некоммерческого использования на своём устройстве, в учебных и исследовательских целях, а также для обеспечения совместимости колонки с другими сервисами. Распознавание речи и синтез голоса по-прежнему выполняет Яндекс, а AIBox работает с аккаунтом и устройством самого пользователя. Пользоваться сервисами Яндекса и провайдеров нейросетей нужно в соответствии с их пользовательскими соглашениями.
+
+**Без гарантий.** Программа распространяется «как есть», без каких-либо гарантий (см. `LICENSE`, разделы 7 и 8). Получение root-доступа и изменение настроек колонки могут лишить её гарантии, нарушить условия использования, привести к неработоспособности устройства или блокировке аккаунта. Вы используете проект на свой риск и сами отвечаете за соблюдение законодательства своей страны и условий используемых сервисов. Автор не несёт ответственности за любой ущерб от использования программы.
+
+**Правообладателям.** Если вы считаете, что материалы репозитория нарушают ваши права, создайте [issue](https://github.com/SileboxUnderfined/aibox-y/issues) или напишите владельцу репозитория через профиль GitHub [@SileboxUnderfined](https://github.com/SileboxUnderfined). Обращения будут рассмотрены, а спорные материалы при необходимости удалены.
+
+### Legal notice (English)
+
+AIBox is an unofficial, independent project. It is not affiliated with, endorsed, sponsored or supported by Yandex LLC or its affiliates. "Yandex", "Yandex Station", "Alice" and related names are trademarks of their respective owners and are used here only to describe compatibility. This repository contains no Yandex firmware, binaries, source code, keys or other secrets, and no rooting tools; it does not circumvent subscriptions, DRM or access controls. It is intended for personal, non-commercial, educational and interoperability use on hardware you own. The software is provided "as is", without warranty of any kind (see `LICENSE`); use it at your own risk and in accordance with applicable law and the terms of the services involved. Rights holders with concerns can open an issue or contact the repository owner via GitHub, and the material in question will be reviewed and removed if appropriate.
