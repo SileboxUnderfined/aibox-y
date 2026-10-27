@@ -3,6 +3,7 @@ package aibox
 import (
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -130,6 +131,7 @@ func (r *Resolver) RemoveProvider(key string) (string, error) {
 	delete(r.opt.Models, key)
 	delete(r.state.ModelIDs, key)
 	delete(r.state.SearchModes, key)
+	r.state.SearchOrder = slices.DeleteFunc(r.state.SearchOrder, func(k string) bool { return k == key })
 	if r.state.Model == key {
 		r.state.Model = r.opt.DefaultModel
 	}

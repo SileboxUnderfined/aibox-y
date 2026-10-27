@@ -54,8 +54,11 @@ code{font-size:12px}
 <section>
 <h2>Интернет</h2>
 <div class="head"><label><input type="checkbox" id="searchOn" style="width:auto"> Разрешить нейросетям искать в интернете</label><span class="badge" id="searchBadge"></span></div>
+<p class="hint">Когда модели нужно что-то узнать, она сама отправляет запрос поисковику, а ответ пересказывает голосом. Так ищет любая модель, включая DeepSeek.</p>
+<div class="grid" id="order"></div>
+<p class="hint">Поисковики по порядку: если первый не ответил, спросим следующего. Подойдут модели со своим поиском: Perplexity Sonar (свой API <code>https://api.perplexity.ai</code> или <code>perplexity/sonar</code> в OpenRouter), ChatGPT, Claude, OpenRouter. Или Tavily по ключу:</p>
 <div class="row"><input id="searchKey" type="password" autocomplete="off"></div>
-<p class="hint">Ключ Tavily (бесплатно до 1000 запросов в месяц на <code>tavily.com</code>) даёт поиск любой модели, включая DeepSeek. Без него ищут только модели со своим поиском: ChatGPT, Claude и OpenRouter, это дороже. У каждой модели способ можно выбрать ниже. Голосом: «Алиса, включи интернет» или «выключи интернет».</p>
+<p class="hint">Голосом: «Алиса, включи интернет» или «выключи интернет».</p>
 </section>
 
 <section>
@@ -139,13 +142,13 @@ function render(s) {
     key.placeholder = p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + p.key_env;
     const search = el.querySelector(".search");
     search.dataset.provider = p.key;
-    const modes = [["auto", "Интернет: автоматически"], ["tool", "Интернет: через Tavily"], ["native", "Интернет: свой поиск провайдера"], ["off", "Интернет: выключен"]];
+    const modes = [["auto", "Интернет: автоматически"], ["tool", "Интернет: через поисковик"], ["native", "Интернет: свой поиск провайдера"], ["off", "Интернет: выключен"]];
     for (const [v, t] of modes) {
       if (v === "native" && !p.native_search) continue;
       const o = document.createElement("option"); o.value = v; o.textContent = t; search.append(o);
     }
     search.value = p.search_mode;
-    const now = {tool: "сейчас ищет через Tavily", native: "сейчас ищет своим поиском"}[p.search] || "сейчас без интернета";
+    const now = {tool: "сейчас ищет через поисковик", native: "сейчас ищет своим поиском"}[p.search] || "сейчас без интернета";
     el.querySelector(".kind").textContent += " · " + now;
     el.querySelector(".load").onclick = async ev => {
       ev.target.disabled = true; status("Загружаю модели " + p.title + "…");
@@ -161,6 +164,21 @@ function render(s) {
     box.append(el);
   }
   $("#searchOn").checked = s.search_on;
+  const order = $("#order");
+  order.textContent = "";
+  for (let i = 0; i < 3; i++) {
+    const label = document.createElement("label");
+    label.textContent = i === 0 ? "Поисковик" : "Запасной " + i;
+    const sel = document.createElement("select");
+    sel.className = "backend";
+    const none = document.createElement("option"); none.value = ""; none.textContent = "—"; sel.append(none);
+    for (const b of s.search_backends || []) {
+      const o = document.createElement("option"); o.value = b.key;
+      o.textContent = b.title + (b.ready ? "" : " · нет ключа"); sel.append(o);
+    }
+    sel.value = (s.search_order || [])[i] || "";
+    label.append(sel); order.append(label);
+  }
   const sk = $("#searchKey");
   sk.dataset.env = s.search_key_env; sk.value = "";
   sk.placeholder = s.search_has_key ? "Новый ключ Tavily (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + s.search_key_env;
@@ -211,6 +229,7 @@ $("#save").onclick = async () => {
   for (const k of document.querySelectorAll(".key")) if (k.value.trim()) body.keys[k.dataset.env] = k.value.trim();
   if ($("#searchKey").value.trim()) body.keys[$("#searchKey").dataset.env] = $("#searchKey").value.trim();
   body.search_on = $("#searchOn").checked;
+  body.search_order = [...document.querySelectorAll(".backend")].map(b => b.value).filter(Boolean);
   body.search_modes = {};
   for (const sel of document.querySelectorAll(".search")) {
     const orig = data.providers.find(p => p.key === sel.dataset.provider).search_mode;

@@ -45,6 +45,9 @@ func searchFrom(ctx context.Context) Search {
 // feature of OpenAI itself, of OpenRouter and of Anthropic.
 func NativeSearch(cfg Config) string {
 	switch {
+	case cfg.Type != "anthropic" && (strings.Contains(cfg.BaseURL, "perplexity.ai") || strings.HasPrefix(cfg.Model, "perplexity/") || strings.HasSuffix(cfg.Model, ":online")):
+		// Perplexity Sonar and OpenRouter's :online models search on every request.
+		return "self"
 	case cfg.Type == "anthropic" && (cfg.BaseURL == "" || strings.Contains(cfg.BaseURL, "anthropic.com")):
 		return "anthropic"
 	case cfg.Type == "anthropic":

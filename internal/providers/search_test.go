@@ -204,3 +204,28 @@ func TestSpeakable(t *testing.T) {
 		t.Fatalf("speakable = %q", got)
 	}
 }
+
+func TestSearchingModels(t *testing.T) {
+	for _, cfg := range []Config{{BaseURL: "https://api.perplexity.ai", Model: "sonar"}, {BaseURL: "https://openrouter.ai/api/v1", Model: "perplexity/sonar"}, {BaseURL: "https://openrouter.ai/api/v1", Model: "openai/gpt-5:online"}} {
+		if NativeSearch(cfg) != "self" {
+			t.Errorf("%v should search by itself", cfg)
+		}
+	}
+}
+
+func TestSonarAddsNoPlugin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(data), "plugins") || strings.Contains(string(data), "tools") {
+			t.Errorf("request = %s", data)
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"Курс 80 рублей[1][2]."}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("K", "secret")
+	c, _ := New(Config{BaseURL: srv.URL + "/openrouter.ai", Model: "perplexity/sonar", APIKeyEnv: "K"})
+	answer, err := c.Complete(WithSearch(context.Background(), Search{Mode: SearchNative}), "", []Message{{Role: "user", Content: "q"}})
+	if err != nil || answer != "Курс 80 рублей." {
+		t.Fatalf("answer %q, err %v", answer, err)
+	}
+}

@@ -433,3 +433,55 @@ func TestSearchModes(t *testing.T) {
 		t.Fatal("bad mode accepted")
 	}
 }
+
+type failingLLM struct{ calls int }
+
+func (f *failingLLM) Complete(context.Context, string, []providers.Message) (string, error) {
+	f.calls++
+	return "", context.DeadlineExceeded
+}
+
+func TestSearchModelsInOrder(t *testing.T) {
+	store, _ := chats.Open(t.TempDir())
+	t.Setenv("SONAR_KEY", "k")
+	t.Setenv("GPT_KEY", "k")
+	sonar, gpt := &failingLLM{}, &searchLLM{}
+	r := New(Options{Models: map[string]*Model{
+		"deepseek": {Key: "deepseek", Config: providers.Config{BaseURL: "https://api.deepseek.com/v1"}, Completer: &searchLLM{}},
+		"sonar":    {Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar", APIKeyEnv: "SONAR_KEY"}, Completer: sonar},
+		"gpt":      {Key: "gpt", Config: providers.Config{BaseURL: "https://api.openai.com/v1", APIKeyEnv: "GPT_KEY"}, Completer: gpt},
+	}, DefaultModel: "deepseek", Store: store, Search: &fakeSearcher{}})
+	if err := r.Apply(Update{SearchOrder: &[]string{"deepseek"}}); err == nil {
+		t.Fatal("a model without search accepted as a search backend")
+	}
+	if err := r.Apply(Update{SearchOrder: &[]string{"tavily", "sonar", "gpt"}}); err != nil {
+		t.Fatal(err)
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("DeepSeek with search models gets %q", search.Mode)
+	}
+	out, err := search.Searcher.Search(context.Background(), "курс доллара")
+	if err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if sonar.calls != 1 || len(gpt.modes) != 1 || gpt.modes[0] != providers.SearchNative || !strings.Contains(gpt.systems[0], "поисковый помощник") {
+		t.Fatalf("Tavily without a key must be skipped, Sonar tried, GPT asked with its own search: sonar %d, gpt %v", sonar.calls, gpt.modes)
+	}
+	var backends []string
+	for _, b := range r.Settings().SearchBackends {
+		backends = append(backends, b.Key)
+	}
+	if strings.Join(backends, ",") != "tavily,gpt,sonar" {
+		t.Fatalf("backends = %v", backends)
+	}
+}
+
+func TestSonarSearchesByItself(t *testing.T) {
+	r, _, _ := setup(t)
+	r.opt.Search = &fakeSearcher{ready: true}
+	m := Model{Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar"}}
+	if got := r.searchFor(m).Mode; got != providers.SearchNative {
+		t.Fatalf("Sonar gets %q", got)
+	}
+}

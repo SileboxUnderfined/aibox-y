@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 
 	"aiboxy/internal/providers"
@@ -37,6 +38,16 @@ type Settings struct {
 	SearchOn          bool           `json:"search_on"`
 	SearchKeyEnv      string         `json:"search_key_env"`
 	SearchHasKey      bool           `json:"search_has_key"`
+	// SearchOrder is who runs web_search, first to last; SearchBackends is
+	// what can be put there.
+	SearchOrder    []string        `json:"search_order"`
+	SearchBackends []SearchBackend `json:"search_backends"`
+}
+
+type SearchBackend struct {
+	Key   string `json:"key"`
+	Title string `json:"title"`
+	Ready bool   `json:"ready"`
 }
 
 // Update carries the fields the panel changed; nil means unchanged.
@@ -48,6 +59,7 @@ type Update struct {
 	SearchOn   *bool             `json:"search_on,omitempty"`
 	// SearchModes maps a provider to "auto", "tool", "native" or "off".
 	SearchModes map[string]string `json:"search_modes,omitempty"`
+	SearchOrder *[]string         `json:"search_order,omitempty"`
 }
 
 func (r *Resolver) Settings() Settings {
@@ -69,6 +81,15 @@ func (r *Resolver) Settings() Settings {
 	r.mu.Unlock()
 	for i, m := range models {
 		s.Providers[i].Search = r.searchFor(m).Mode
+	}
+	s.SearchOrder = r.searchOrder()
+	if r.opt.Search != nil {
+		s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: tavilyBackend, Title: "Tavily", Ready: r.backendReady(tavilyBackend)})
+	}
+	for _, m := range models {
+		if canSearch(m.Config) {
+			s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: m.Key, Title: m.spoken() + " (" + m.Config.Model + ")", Ready: r.backendReady(m.Key)})
+		}
 	}
 	return s
 }
@@ -107,6 +128,19 @@ func (r *Resolver) Apply(u Update) error {
 		} else {
 			r.state.SearchModes[key] = mode
 		}
+	}
+	if u.SearchOrder != nil {
+		var order []string
+		for _, key := range *u.SearchOrder {
+			m, ok := r.opt.Models[key]
+			if key != tavilyBackend && (!ok || !canSearch(m.Config)) {
+				return errors.New("this model cannot search: " + key)
+			}
+			if !slices.Contains(order, key) {
+				order = append(order, key)
+			}
+		}
+		r.state.SearchOrder = order
 	}
 	if u.SearchOn != nil {
 		r.state.SearchOff = !*u.SearchOn

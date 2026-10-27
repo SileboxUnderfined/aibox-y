@@ -30,6 +30,9 @@ type state struct {
 	Custom       []CustomProvider  `json:"custom_providers,omitempty"`
 	// SearchOff turns web search off for every model.
 	SearchOff bool `json:"search_off,omitempty"`
+	// SearchOrder lists who runs web_search, in order: "tavily" or keys of
+	// models with their own search. Empty means Tavily alone.
+	SearchOrder []string `json:"search_order,omitempty"`
 	// SearchModes is per model: "auto" (default), "tool", "native" or "off".
 	SearchModes map[string]string `json:"search_modes,omitempty"`
 }

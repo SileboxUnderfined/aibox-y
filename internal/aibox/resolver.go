@@ -305,7 +305,7 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 			return "Выключила нейросетям интернет.", true
 		}
 		if r.searchFor(r.model()).Mode == "" {
-			return "Включила интернет, но у " + r.model().spoken() + " поиска пока нет: нужен ключ поисковика в веб-панели.", true
+			return "Включила интернет, но поиск пока не настроен: выберите поисковую модель или ключ Tavily в веб-панели.", true
 		}
 		return "Включила нейросетям интернет.", true
 	case cmdShowPrompt:
