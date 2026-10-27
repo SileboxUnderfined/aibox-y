@@ -67,3 +67,23 @@ func patchVarint(data []byte, path []protowire.Number, value uint64) ([]byte, er
 	}
 	return out, nil
 }
+
+// DisableAntimat asks the cloud recognizer not to mask profanity in this
+// request. Like EnableApproval it appends one leaf and keeps all other bytes.
+func DisableAntimat(f Frame) ([]byte, error) {
+	var field protowire.Number
+	switch f.Kind() {
+	case "VoiceInput":
+		field = 3
+	case "SpeechInput":
+		field = 18
+	default:
+		return nil, errors.New("not a voice input")
+	}
+	prefix := len(f.Prefix)
+	body, err := patchVarint(f.Raw[prefix:], []protowire.Number{1, field, 20}, 1)
+	if err != nil {
+		return nil, err
+	}
+	return append(append([]byte{}, f.Prefix...), body...), nil
+}

@@ -131,6 +131,16 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		reported := func(value string) bool { return value != "" && value != "0" }
 		slog.Info("native_playback_status", "request", requestTag(stat.GetRequestMessageId()), "error_class", kind, "playback_reported", reported(timestamps.GetOnSoundPlayerBeginTime()) || reported(timestamps.GetOnPlayerBegin()), "finished_reported", reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
 	}
+	if kind := f.Kind(); kind == "VoiceInput" || kind == "SpeechInput" {
+		if r, ok := n.resolver.(interface{ UncensoredASR() bool }); ok && r.UncensoredASR() {
+			if patched, err := wire.DisableAntimat(f); err == nil {
+				if g := wire.Decode(patched, wire.ClientToServer); g.Client != nil && g.Client.GetEvent() != nil {
+					data, f, e = patched, g, g.Client.GetEvent()
+					slog.Info("native_antimat_disabled", "request", requestTag(e.GetHeader().GetMessageId()))
+				}
+			}
+		}
+	}
 	var req *request.TAliceRequestProto
 	switch f.Kind() {
 	case "TextInput":

@@ -39,6 +39,7 @@ type Config struct {
 	IdleMinutes  int                         `json:"idle_minutes"`
 	MaxHistory   int                         `json:"max_history"`
 	TimeoutSec   int                         `json:"request_timeout_seconds"`
+	KeepAntimat  bool                        `json:"keep_antimat"`
 	Web          struct {
 		Enabled bool   `json:"enabled"`
 		Listen  string `json:"listen"`
@@ -141,6 +142,7 @@ func main() {
 			Idle:           time.Duration(cfg.IdleMinutes) * time.Minute,
 			MaxHistory:     cfg.MaxHistory,
 			RequestTimeout: time.Duration(cfg.TimeoutSec) * time.Second,
+			KeepAntimat:    cfg.KeepAntimat,
 		})
 	}
 

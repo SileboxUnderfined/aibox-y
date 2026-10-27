@@ -239,3 +239,19 @@ func TestCustomProvider(t *testing.T) {
 		t.Fatalf("remove: %s %v %s", env, err, r2.CurrentModel())
 	}
 }
+
+func TestStripWakeAndUncensored(t *testing.T) {
+	for in, want := range map[string]string{"Алиса полный это": "Полный это", "алиса, сколько": "Сколько", "Алисата": "Алисата", "Алиса": "Алиса"} {
+		if got := stripWake(in); got != want {
+			t.Errorf("stripWake(%q) = %q, want %q", in, got, want)
+		}
+	}
+	r, _, _ := setup(t)
+	if r.UncensoredASR() {
+		t.Fatal("uncensored outside a chat")
+	}
+	say(t, r, "поговорить")
+	if !r.UncensoredASR() {
+		t.Fatal("not uncensored inside a chat")
+	}
+}

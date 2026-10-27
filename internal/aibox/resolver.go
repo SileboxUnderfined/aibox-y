@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type Options struct {
 	Idle           time.Duration
 	MaxHistory     int
 	RequestTimeout time.Duration
+	// KeepAntimat leaves Yandex's profanity masking on inside chats.
+	KeepAntimat bool
 }
 
 type session struct {
@@ -105,6 +108,12 @@ func (r *Resolver) modelNames() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return modelList(r.opt.Models)
+}
+
+// UncensoredASR tells the proxy to ask Yandex for unmasked recognition; only
+// while a chat is open, so ordinary Alice requests stay untouched.
+func (r *Resolver) UncensoredASR() bool {
+	return !r.opt.KeepAntimat && r.inChat()
 }
 
 // CurrentModel is the key of the model that answers now.
@@ -291,7 +300,7 @@ func (r *Resolver) ask(ctx context.Context, text string) string {
 	if s == nil {
 		return "Чат закрыт. Скажите «новый чат» или «поговорить»."
 	}
-	question := strings.TrimSpace(text)
+	question := stripWake(text)
 	history := s.chat.Messages
 	if len(history) > r.opt.MaxHistory {
 		history = history[len(history)-r.opt.MaxHistory:]
@@ -348,6 +357,18 @@ func (r *Resolver) title(chat *chats.Chat, question string) {
 	if err := r.opt.Store.Save(chat); err != nil {
 		slog.Warn("chat_save_failed")
 	}
+}
+
+var wakeWord = regexp.MustCompile(`(?i)^\s*алис[аы]?[\s,.!:—-]+`)
+
+// stripWake drops a leading "Алиса," that recognition keeps in the text.
+func stripWake(text string) string {
+	text = strings.TrimSpace(text)
+	q := strings.TrimSpace(wakeWord.ReplaceAllString(text, ""))
+	if q == "" || q == text {
+		return text
+	}
+	return capitalize(q)
 }
 
 func fallbackName(question string) string {
