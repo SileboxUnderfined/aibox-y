@@ -28,6 +28,14 @@ type Options struct {
 	RequestTimeout time.Duration
 	// KeepAntimat leaves Yandex's profanity masking on inside chats.
 	KeepAntimat bool
+	// Search runs our web_search tool; nil leaves only providers' own search.
+	Search WebSearcher
+}
+
+type WebSearcher interface {
+	providers.Searcher
+	Ready() bool
+	KeyEnv() string
 }
 
 type session struct {
@@ -73,7 +81,7 @@ func New(opt Options) *Resolver {
 		}
 		opt.Models[cp.Key] = m
 	}
-	if _, ok := opt.Models[r.state.Model]; !ok {
+	if m, ok := opt.Models[r.state.Model]; !ok || m.SearchOnly {
 		r.state.Model = opt.DefaultModel
 	}
 	for key, id := range r.state.ModelIDs {
@@ -298,6 +306,18 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 			slog.Warn("state_save_failed")
 		}
 		return "Вернула обычный системный промпт.", true
+	case cmdSearchOn, cmdSearchOff:
+		off := c.kind == cmdSearchOff
+		if err := r.update(func(s *state) { s.SearchOff = off }); err != nil {
+			slog.Warn("state_save_failed")
+		}
+		if off {
+			return "Выключила нейросетям интернет.", true
+		}
+		if r.searchFor(r.model()).Mode == "" {
+			return "Включила интернет, но поиск пока не настроен: выберите поисковую модель или ключ Tavily в веб-панели.", true
+		}
+		return "Включила нейросетям интернет.", true
 	case cmdShowPrompt:
 		r.mu.Lock()
 		custom := r.state.SystemPrompt
@@ -351,9 +371,15 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
 	model := r.modelFor(s.model)
+	system := r.systemPrompt()
+	search := r.searchFor(model)
+	if search.Mode != "" {
+		ctx = providers.WithSearch(ctx, search)
+		system += "\n\n" + searchPrompt(r.now())
+	}
 	started := r.now()
-	answer, err := model.Completer.Complete(ctx, r.systemPrompt(), messages)
-	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
+	answer, err := model.Completer.Complete(ctx, system, messages)
+	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer), "search", search.Mode)
 	if err == nil && strings.TrimSpace(answer) == "" {
 		err = errors.New("empty answer")
 	}
@@ -459,6 +485,9 @@ func (r *Resolver) modelPrefix(words []string) (string, int) {
 		spoken := strings.Join(words[:n], " ")
 		for _, k := range sortedKeys(r.opt.Models) {
 			m := r.opt.Models[k]
+			if m.SearchOnly {
+				continue
+			}
 			for _, name := range append([]string{m.Key, m.Title}, m.Aliases...) {
 				if name == "" {
 					continue

@@ -43,20 +43,71 @@ func (c *claude) Complete(ctx context.Context, system string, messages []Message
 			params.Messages = append(params.Messages, anthropic.NewUserMessage(block))
 		}
 	}
-	resp, err := client.Messages.New(ctx, params)
-	if err != nil {
-		return "", err
+	search := searchFrom(ctx)
+	switch {
+	case search.Mode == SearchTool:
+		params.Tools = []anthropic.ToolUnionParam{{OfTool: &anthropic.ToolParam{
+			Name:        searchToolName,
+			Description: anthropic.String(searchToolDescription),
+			InputSchema: anthropic.ToolInputSchemaParam{Properties: map[string]any{"query": map[string]string{"type": "string", "description": "Поисковый запрос"}}, Required: []string{"query"}},
+		}}}
+	case search.Mode == SearchNative && NativeSearch(c.cfg) == "anthropic":
+		params.Tools = []anthropic.ToolUnionParam{{OfWebSearchTool20250305: &anthropic.WebSearchTool20250305Param{
+			MaxUses:      anthropic.Int(maxSearchRounds),
+			UserLocation: anthropic.UserLocationParam{Country: anthropic.String("RU")},
+		}}}
 	}
-	if resp.StopReason == anthropic.StopReasonRefusal {
-		return "", errors.New("model declined the request")
+	for round := 0; ; round++ {
+		if round >= maxSearchRounds && search.Mode == SearchTool {
+			params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
+		}
+		resp, err := client.Messages.New(ctx, params)
+		if err != nil {
+			return "", err
+		}
+		if resp.StopReason == anthropic.StopReasonRefusal {
+			return "", errors.New("model declined the request")
+		}
+		continueTurn := resp.StopReason == anthropic.StopReasonPauseTurn
+		var results []anthropic.ContentBlockParamUnion
+		if resp.StopReason == anthropic.StopReasonToolUse && search.Mode == SearchTool {
+			for _, block := range resp.Content {
+				if use, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
+					result := "Неизвестный инструмент."
+					if use.Name == searchToolName {
+						result = runSearch(ctx, search.Searcher, string(use.Input))
+					}
+					results = append(results, anthropic.NewToolResultBlock(use.ID, result, false))
+				}
+			}
+		}
+		if (continueTurn || len(results) > 0) && round < 2*maxSearchRounds {
+			params.Messages = append(params.Messages, resp.ToParam())
+			if len(results) > 0 {
+				params.Messages = append(params.Messages, anthropic.NewUserMessage(results...))
+			}
+			continue
+		}
+		return claudeAnswer(resp, search.Mode != "")
 	}
+}
+
+// claudeAnswer is the text the model wrote after its last search; what it
+// said before searching ("сейчас поищу") is not part of the answer.
+func claudeAnswer(resp *anthropic.Message, searched bool) (string, error) {
 	var parts []string
 	for _, block := range resp.Content {
-		if text, ok := block.AsAny().(anthropic.TextBlock); ok {
-			parts = append(parts, text.Text)
+		switch b := block.AsAny().(type) {
+		case anthropic.TextBlock:
+			parts = append(parts, b.Text)
+		case anthropic.ServerToolUseBlock, anthropic.WebSearchToolResultBlock, anthropic.ToolUseBlock:
+			parts = nil
 		}
 	}
 	answer := strings.TrimSpace(strings.Join(parts, ""))
+	if searched {
+		answer = speakable(answer)
+	}
 	if answer == "" {
 		return "", errors.New("provider returned no answer")
 	}

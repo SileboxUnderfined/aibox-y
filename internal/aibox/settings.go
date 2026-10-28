@@ -19,6 +19,8 @@ type Model struct {
 	Aliases   []string
 	Config    providers.Config
 	Completer providers.Completer
+	// SearchOnly models never answer chats: they only run web_search.
+	SearchOnly bool
 }
 
 // state is what voice commands and the web panel change; it survives restarts.
@@ -28,6 +30,13 @@ type state struct {
 	BasePrompt   string            `json:"base_prompt,omitempty"`
 	ModelIDs     map[string]string `json:"model_ids,omitempty"`
 	Custom       []CustomProvider  `json:"custom_providers,omitempty"`
+	// SearchOff turns web search off for every model.
+	SearchOff bool `json:"search_off,omitempty"`
+	// SearchOrder lists who runs web_search, in order: "tavily" or keys of
+	// models with their own search. Empty means Tavily alone.
+	SearchOrder []string `json:"search_order,omitempty"`
+	// SearchModes is per model: "auto" (default), "tool", "native" or "off".
+	SearchModes map[string]string `json:"search_modes,omitempty"`
 }
 
 func loadState(path string) state {
@@ -62,6 +71,9 @@ func findModel(models map[string]*Model, spoken string) *Model {
 	bestScore := 0.0
 	for _, key := range sortedKeys(models) {
 		m := models[key]
+		if m.SearchOnly {
+			continue
+		}
 		for _, name := range append([]string{m.Key, m.Title}, m.Aliases...) {
 			if name == "" {
 				continue
@@ -96,7 +108,9 @@ func (m Model) spoken() string {
 func modelList(models map[string]*Model) string {
 	names := make([]string, 0, len(models))
 	for _, k := range sortedKeys(models) {
-		names = append(names, models[k].spoken())
+		if !models[k].SearchOnly {
+			names = append(names, models[k].spoken())
+		}
 	}
 	return strings.Join(names, ", ")
 }
