@@ -43,6 +43,7 @@ type Config struct {
 	TimeoutSec   int                         `json:"request_timeout_seconds"`
 	KeepAntimat  bool                        `json:"keep_antimat"`
 	Search       *search.Config              `json:"search"`
+	Commands     map[string]aibox.Phrases    `json:"commands"` // extra or replaced voice phrases, by command id
 	Web          struct {
 		Enabled bool   `json:"enabled"`
 		Listen  string `json:"listen"`
@@ -74,6 +75,9 @@ func loadConfig(path string) (*Config, error) {
 		if _, ok := cfg.Providers[cfg.Provider]; !ok {
 			return nil, fmt.Errorf("config: provider %q is not in providers", cfg.Provider)
 		}
+	}
+	if err := aibox.ValidateCommands(cfg.Commands); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	if !filepath.IsAbs(cfg.ChatsDir) {
 		cfg.ChatsDir = filepath.Join(filepath.Dir(path), cfg.ChatsDir)
@@ -168,6 +172,7 @@ func main() {
 			RequestTimeout: time.Duration(cfg.TimeoutSec) * time.Second,
 			KeepAntimat:    cfg.KeepAntimat,
 			Search:         searcher,
+			Commands:       cfg.Commands,
 		})
 	}
 
