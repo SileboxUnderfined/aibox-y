@@ -2,7 +2,8 @@
 # AIBox guard. While Alice points at the local proxy, a dead proxy means a
 # mute speaker, so this loop restarts AIBox when it stops answering.
 # Installed by "aiboxctl.sh apply" as /etc/init.d/S99zzaibox-guard.
-package=/data/quazar/yam/data/plugins/aibox
+# setup.sh records where the plugin host keeps the package (legacy YAM or Luna).
+package=$(cat /data/opt/aibox/package 2>/dev/null || echo /data/quazar/yam/data/plugins/aibox)
 health=http://127.0.0.1:8443/healthz
 yam=http://127.0.0.1:8099/api/plugins/aibox
 cfg=/system/vendor/quasar/quasar.cfg
