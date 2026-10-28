@@ -69,6 +69,13 @@ func TestNativeInterruptedAnswer(t *testing.T) {
 				t.Fatalf("interrupted = %v, want %v", got, tc.want)
 			}
 			canceled := slices.Contains(cancels, ttsID)
+			// The old answer's TTS is canceled once the new request is
+			// handled, which can be after the new answer's TTS starts.
+			for tc.want && !canceled {
+				if c := nextSoundFrame(t, up).Client.GetEvent().GetCancelRequest(); c != nil {
+					canceled = c.GetRequestMessageId() == ttsID
+				}
+			}
 			n.mu.Lock()
 			first := n.requests["first"]
 			n.mu.Unlock()
