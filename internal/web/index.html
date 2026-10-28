@@ -38,6 +38,12 @@ code{font-size:12px}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:12px 16px}
 .bar div{max-width:720px;margin:0 auto;display:flex;gap:12px;align-items:center}
 #status{color:var(--muted)}
+.check{display:flex;gap:8px;align-items:center;cursor:pointer;margin-top:6px}
+.check input{width:auto}
+.fact{display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding:8px 0}
+.fact:first-child{border-top:0}
+.fact span{flex:1}
+.fact small{color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
@@ -63,6 +69,17 @@ code{font-size:12px}
 </div>
 <div class="row"><button class="primary" id="cpSave" type="button">Добавить</button><button id="cpCancel" type="button" hidden>Отмена</button></div>
 <p class="hint">Адрес — до <code>/v1</code>, без <code>/chat/completions</code>. Подойдут Groq, Together, Mistral, Ollama или LM Studio в локальной сети и любые другие с OpenAI-совместимым API. Потом: «Алиса, переключись на …».</p>
+</section>
+
+<section id="memory" hidden>
+<h2>Память</h2>
+<label class="check"><input type="checkbox" id="memOn"> Общая память: факты о вас видны во всех чатах</label>
+<label class="check"><input type="checkbox" id="memAuto"> Модель сама запоминает важное и говорит «запомнила»</label>
+<div id="memExcluded"></div>
+<div id="facts" style="margin-top:12px"></div>
+<div class="row"><input id="factNew" placeholder="Например: меня зовут Валерий" maxlength="300"><button type="button" id="factAdd">Добавить</button></div>
+<div class="row"><button type="button" id="factClear">Очистить память</button></div>
+<p class="hint">Голосом: «Алиса, запомни, что …», «забудь, что …», «что ты обо мне знаешь», «забудь всё обо мне», «выключи память». Факты хранятся на колонке в <code>memory.json</code> и уходят только тому провайдеру, который отвечает.</p>
 </section>
 
 <section>
@@ -142,9 +159,57 @@ function render(s) {
     };
     box.append(el);
   }
+  renderMemory(s.memory, s.providers);
   $("#user").value = s.user_prompt;
   $("#base").value = s.base_prompt || s.default_base_prompt;
 }
+
+const sources = {voice: "голосом", model: "модель", panel: "в панели"};
+function renderMemory(m, providers) {
+  $("#memory").hidden = !m.available;
+  if (!m.available) return;
+  $("#memOn").checked = m.enabled;
+  $("#memAuto").checked = m.auto;
+  const ex = $("#memExcluded");
+  ex.textContent = "";
+  for (const p of providers) {
+    const l = document.createElement("label"); l.className = "check";
+    const c = document.createElement("input"); c.type = "checkbox"; c.className = "memEx"; c.value = p.key;
+    c.checked = m.excluded.includes(p.key);
+    l.append(c, " Не отправлять память в " + p.title);
+    ex.append(l);
+  }
+  const box = $("#facts");
+  box.textContent = "";
+  if (!m.facts.length) { box.innerHTML = '<p class="hint">Пока пусто.</p>'; }
+  for (const f of m.facts) {
+    const row = document.createElement("div"); row.className = "fact";
+    const t = document.createElement("span"); t.textContent = f.text;
+    const src = document.createElement("small"); src.textContent = sources[f.source] || f.source;
+    const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Изменить";
+    edit.onclick = () => {
+      const text = prompt("Факт", f.text);
+      if (text !== null) factCall("/api/memory/" + f.id, "PUT", {text}, "Изменено.");
+    };
+    const del = document.createElement("button"); del.type = "button"; del.textContent = "Удалить";
+    del.onclick = () => factCall("/api/memory/" + f.id, "DELETE", null, "Удалено.");
+    row.append(t, src, edit, del);
+    box.append(row);
+  }
+  $("#factAdd").disabled = m.facts.length >= m.max;
+}
+async function factCall(path, method, body, done) {
+  // Only the memory is redrawn, so unsaved edits elsewhere stay.
+  try { const s = await api(path, {method, body: body ? JSON.stringify(body) : undefined}); data.memory = s.memory; renderMemory(s.memory, data.providers); status(done); }
+  catch (e) { status("Ошибка: " + e.message, true); }
+}
+$("#factAdd").onclick = async () => {
+  const text = $("#factNew").value.trim();
+  if (!text) return;
+  await factCall("/api/memory", "POST", {text}, "Запомнено.");
+  $("#factNew").value = "";
+};
+$("#factClear").onclick = () => { if (confirm("Удалить все факты о вас?")) factCall("/api/memory", "DELETE", null, "Память очищена."); };
 
 function status(text, bad) { const el = $("#status"); el.textContent = text; el.style.color = bad ? "var(--bad)" : ""; }
 
@@ -186,6 +251,11 @@ $("#save").onclick = async () => {
   for (const k of document.querySelectorAll(".key")) if (k.value.trim()) body.keys[k.dataset.env] = k.value.trim();
   body.user_prompt = $("#user").value;
   body.base_prompt = $("#base").value;
+  if (data.memory.available) {
+    body.memory_enabled = $("#memOn").checked;
+    body.memory_auto = $("#memAuto").checked;
+    body.memory_excluded = [...document.querySelectorAll(".memEx:checked")].map(c => c.value);
+  }
   status("Сохраняю…");
   try { render(await api("/api/settings", {method: "POST", body: JSON.stringify(body)})); status("Сохранено."); }
   catch (e) { status("Ошибка: " + e.message, true); }

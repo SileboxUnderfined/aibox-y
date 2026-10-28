@@ -12,6 +12,7 @@ import (
 
 	"aiboxy/internal/bridge"
 	"aiboxy/internal/chats"
+	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
 )
 
@@ -22,6 +23,7 @@ type Options struct {
 	DefaultModel   string
 	StatePath      string // where voice-changed settings are kept
 	Store          *chats.Store
+	Memory         *memory.Store // facts every chat sees; nil turns the memory off
 	SystemPrompt   string
 	Idle           time.Duration
 	MaxHistory     int
@@ -124,6 +126,19 @@ func (r *Resolver) CurrentModel() string {
 	return r.state.Model
 }
 
+// command parses text, dropping commands that do not apply right now.
+func (r *Resolver) command(text string) command {
+	c := parse(text, r.inChat())
+	switch {
+	case c.kind == cmdModelSwitch && r.find(c.name) == nil:
+		c.kind = cmdNone
+	case c.kind.isMemory() && !r.memoryOn(), c.kind.isMemorySwitch() && r.opt.Memory == nil:
+		// With the memory off, "запомни …" is Alice's again.
+		c.kind = cmdNone
+	}
+	return c
+}
+
 func (r *Resolver) systemPrompt() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -158,10 +173,7 @@ func (r *Resolver) inChat() bool {
 
 func (r *Resolver) Decide(_ context.Context, text string) bridge.RouteDecision {
 	inChat := r.inChat()
-	c := parse(text, inChat)
-	if c.kind == cmdModelSwitch && r.find(c.name) == nil {
-		c.kind = cmdNone
-	}
+	c := r.command(text)
 	if c.kind != cmdNone {
 		return bridge.RouteDecision{Route: "llm", Source: "aibox_command"}
 	}
@@ -201,11 +213,12 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 // handle answers a chat request; false means the model failed and Alice
 // should answer instead.
 func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
-	c := parse(text, r.inChat())
-	if c.kind == cmdModelSwitch && r.find(c.name) == nil {
-		c.kind = cmdNone
-	}
+	c := r.command(text)
 	slog.Info("chat_command", "kind", int(c.kind))
+	if c.kind.isMemory() || c.kind.isMemorySwitch() {
+		r.touch()
+		return r.handleMemory(c, text), true
+	}
 	switch c.kind {
 	case cmdNew:
 		chat := &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}
@@ -310,6 +323,15 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 	return r.ask(ctx, text)
 }
 
+// touch keeps an open chat from closing while commands are spoken in it.
+func (r *Resolver) touch() {
+	r.mu.Lock()
+	if r.active != nil {
+		r.active.lastUsed = r.now()
+	}
+	r.mu.Unlock()
+}
+
 func (r *Resolver) open(s *session) {
 	s.lastUsed = r.now()
 	r.mu.Lock()
@@ -352,7 +374,12 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 	defer cancel()
 	model := r.modelFor(s.model)
 	started := r.now()
-	answer, err := model.Completer.Complete(ctx, r.systemPrompt(), messages)
+	system := r.systemPrompt()
+	block, autoMemory := r.memoryPrompt(model.Key, s.temporary)
+	if block != "" {
+		system += "\n\n" + block
+	}
+	answer, err := model.Completer.Complete(ctx, system, messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer))
 	if err == nil && strings.TrimSpace(answer) == "" {
 		err = errors.New("empty answer")
@@ -361,6 +388,7 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 		slog.Warn("llm_failed", "no_key", errors.Is(err, providers.ErrNoKey), "timeout", ctx.Err() != nil)
 		return "", false
 	}
+	answer = r.takeFacts(answer, autoMemory)
 	r.mu.Lock()
 	s.chat.Messages = append(s.chat.Messages, providers.Message{Role: "user", Content: question}, providers.Message{Role: "assistant", Content: answer})
 	s.chat.Updated = r.now()

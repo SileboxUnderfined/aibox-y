@@ -24,6 +24,7 @@ import (
 	"aiboxy/internal/aibox"
 	"aiboxy/internal/bridge"
 	"aiboxy/internal/chats"
+	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
 	"aiboxy/internal/web"
 )
@@ -133,11 +134,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		facts, err := memory.Open(filepath.Join(filepath.Dir(*path), "memory.json"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "memory:", err)
+			os.Exit(1)
+		}
 		resolver = aibox.New(aibox.Options{
 			Models:         models,
 			DefaultModel:   cfg.Provider,
 			StatePath:      filepath.Join(filepath.Dir(*path), "state.json"),
 			Store:          store,
+			Memory:         facts,
 			SystemPrompt:   cfg.SystemPrompt,
 			Idle:           time.Duration(cfg.IdleMinutes) * time.Minute,
 			MaxHistory:     cfg.MaxHistory,

@@ -28,6 +28,10 @@ type state struct {
 	BasePrompt   string            `json:"base_prompt,omitempty"`
 	ModelIDs     map[string]string `json:"model_ids,omitempty"`
 	Custom       []CustomProvider  `json:"custom_providers,omitempty"`
+	// The shared memory is on by default, so the flags say what is off.
+	MemoryOff      bool     `json:"memory_off,omitempty"`
+	MemoryAutoOff  bool     `json:"memory_auto_off,omitempty"`
+	MemoryExcluded []string `json:"memory_excluded,omitempty"` // models that never see the facts
 }
 
 func loadState(path string) state {

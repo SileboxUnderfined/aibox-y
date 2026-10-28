@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
 )
 
@@ -29,6 +30,17 @@ type Settings struct {
 	BasePrompt        string         `json:"base_prompt"`
 	DefaultBasePrompt string         `json:"default_base_prompt"`
 	Providers         []ProviderInfo `json:"providers"`
+	Memory            MemoryInfo     `json:"memory"`
+}
+
+// MemoryInfo is the shared memory as the panel shows it.
+type MemoryInfo struct {
+	Available bool          `json:"available"`
+	Enabled   bool          `json:"enabled"`
+	Auto      bool          `json:"auto"`
+	Excluded  []string      `json:"excluded"`
+	Facts     []memory.Fact `json:"facts"`
+	Max       int           `json:"max"`
 }
 
 // Update carries the fields the panel changed; nil means unchanged.
@@ -37,6 +49,10 @@ type Update struct {
 	UserPrompt *string           `json:"user_prompt,omitempty"`
 	BasePrompt *string           `json:"base_prompt,omitempty"`
 	ModelIDs   map[string]string `json:"model_ids,omitempty"`
+
+	MemoryEnabled  *bool     `json:"memory_enabled,omitempty"`
+	MemoryAuto     *bool     `json:"memory_auto,omitempty"`
+	MemoryExcluded *[]string `json:"memory_excluded,omitempty"`
 }
 
 func (r *Resolver) Settings() Settings {
@@ -46,6 +62,10 @@ func (r *Resolver) Settings() Settings {
 	for _, key := range sortedKeys(r.opt.Models) {
 		m := r.opt.Models[key]
 		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != "", BaseURL: m.Config.BaseURL, Aliases: m.Aliases, Custom: r.isCustom(key) >= 0})
+	}
+	s.Memory = MemoryInfo{Available: r.opt.Memory != nil, Enabled: r.memoryOnLocked(), Auto: !r.state.MemoryAutoOff, Excluded: append([]string{}, r.state.MemoryExcluded...), Facts: []memory.Fact{}, Max: memory.MaxFacts}
+	if r.opt.Memory != nil {
+		s.Memory.Facts = r.opt.Memory.List()
 	}
 	return s
 }
@@ -70,6 +90,13 @@ func (r *Resolver) Apply(u Update) error {
 			return errors.New("bad model for " + key)
 		}
 	}
+	if u.MemoryExcluded != nil {
+		for _, key := range *u.MemoryExcluded {
+			if _, ok := r.opt.Models[key]; !ok {
+				return errors.New("unknown provider")
+			}
+		}
+	}
 	for key, id := range u.ModelIDs {
 		id = strings.TrimSpace(id)
 		if err := r.opt.Models[key].setModelID(id); err != nil {
@@ -92,6 +119,15 @@ func (r *Resolver) Apply(u Update) error {
 			base = ""
 		}
 		r.state.BasePrompt = base
+	}
+	if u.MemoryEnabled != nil {
+		r.state.MemoryOff = !*u.MemoryEnabled
+	}
+	if u.MemoryAuto != nil {
+		r.state.MemoryAutoOff = !*u.MemoryAuto
+	}
+	if u.MemoryExcluded != nil {
+		r.state.MemoryExcluded = append([]string(nil), *u.MemoryExcluded...)
 	}
 	return saveState(r.opt.StatePath, r.state)
 }
@@ -120,4 +156,49 @@ func (m *Model) setModelID(id string) error {
 	}
 	m.Config, m.Completer = cfg, c
 	return nil
+}
+
+var errNoMemory = errors.New("memory is not configured")
+
+// AddFact, EditFact, DeleteFact and ClearFacts change the shared memory from the panel.
+func (r *Resolver) AddFact(text string) error {
+	if r.opt.Memory == nil {
+		return errNoMemory
+	}
+	_, err := r.opt.Memory.Add(text, "panel")
+	return factError(err)
+}
+
+func (r *Resolver) EditFact(id, text string) error {
+	if r.opt.Memory == nil {
+		return errNoMemory
+	}
+	_, err := r.opt.Memory.Edit(id, text)
+	return factError(err)
+}
+
+func (r *Resolver) DeleteFact(id string) error {
+	if r.opt.Memory == nil {
+		return errNoMemory
+	}
+	return factError(r.opt.Memory.Delete(id))
+}
+
+func (r *Resolver) ClearFacts() error {
+	if r.opt.Memory == nil {
+		return errNoMemory
+	}
+	return r.opt.Memory.Clear()
+}
+
+func factError(err error) error {
+	switch {
+	case errors.Is(err, memory.ErrFull):
+		return errors.New("память заполнена, удалите лишнее")
+	case errors.Is(err, memory.ErrEmpty):
+		return errors.New("пустой факт")
+	case errors.Is(err, memory.ErrNotFound):
+		return errors.New("факт не найден")
+	}
+	return err
 }

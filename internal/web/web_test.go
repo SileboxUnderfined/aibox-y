@@ -15,7 +15,16 @@ import (
 type fake struct {
 	applied []aibox.Update
 	custom  bool
+	facts   []string
 }
+
+func (f *fake) AddFact(text string) error { f.facts = append(f.facts, "add "+text); return nil }
+func (f *fake) EditFact(id, text string) error {
+	f.facts = append(f.facts, "edit "+id+" "+text)
+	return nil
+}
+func (f *fake) DeleteFact(id string) error { f.facts = append(f.facts, "delete "+id); return nil }
+func (f *fake) ClearFacts() error          { f.facts = append(f.facts, "clear"); return nil }
 
 func (f *fake) Settings() aibox.Settings {
 	s := aibox.Settings{Providers: []aibox.ProviderInfo{{Key: "deepseek", KeyEnv: "AIBOX_TEST_KEY"}}}
@@ -110,5 +119,26 @@ func TestCustomProviderKeys(t *testing.T) {
 	data, _ = os.ReadFile(secrets)
 	if strings.Contains(string(data), "AIBOX_KEY_API_1") || os.Getenv("AIBOX_KEY_API_1") != "" {
 		t.Fatalf("key left behind: %q", data)
+	}
+}
+
+func TestMemoryEndpoints(t *testing.T) {
+	f := &fake{}
+	h := (&Server{Backend: f, SecretsPath: filepath.Join(t.TempDir(), "secrets.env"), Password: "pw"}).Handler()
+	if rec := do(h, "POST", "/api/memory", `{"text":"кот Барсик"}`, "pw", false); rec.Code != 403 {
+		t.Fatalf("unmarked change allowed: %d", rec.Code)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", "/api/memory", `{"text":"кот Барсик"}`},
+		{"PUT", "/api/memory/ab12", `{"text":"кот Мурзик"}`},
+		{"DELETE", "/api/memory/ab12", ""},
+		{"DELETE", "/api/memory", ""},
+	} {
+		if rec := do(h, c.method, c.path, c.body, "pw", true); rec.Code != 200 {
+			t.Fatalf("%s %s: %d %s", c.method, c.path, rec.Code, rec.Body)
+		}
+	}
+	if got := strings.Join(f.facts, "|"); got != "add кот Барсик|edit ab12 кот Мурзик|delete ab12|clear" {
+		t.Fatalf("facts = %s", got)
 	}
 }
