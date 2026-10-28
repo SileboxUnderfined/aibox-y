@@ -10,9 +10,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // ListModels returns the model ids the provider offers to this key.
@@ -23,16 +20,8 @@ func ListModels(ctx context.Context, cfg Config) ([]string, error) {
 	}
 	var ids []string
 	if cfg.Type == "anthropic" {
-		opts := []option.RequestOption{option.WithAPIKey(key)}
-		if cfg.BaseURL != "" {
-			opts = append(opts, option.WithBaseURL(cfg.BaseURL))
-		}
-		client := anthropic.NewClient(opts...)
-		iter := client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
-		for iter.Next() {
-			ids = append(ids, iter.Current().ID)
-		}
-		if err := iter.Err(); err != nil {
+		ids, err = anthropicModels(ctx, cfg, key)
+		if err != nil {
 			return nil, err
 		}
 	} else {

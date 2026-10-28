@@ -20,9 +20,11 @@ case "$action" in
  rollback) ;;
  *) echo 'usage: aiboxctl.sh status|apply|rollback' >&2; exit 2 ;;
 esac
-# The firmware root is read-only; always put it back.
+# The firmware root is read-only; always try to put it back. It stays busy
+# while something holds a file open for writing, so a failed remount only warns.
+readonly_root() { mount -o remount,ro / 2>/dev/null || echo 'warning: / is busy and stays writable until reboot' >&2; }
 mount -o remount,rw /
-trap 'sync; mount -o remount,ro /' EXIT HUP INT TERM
+trap 'sync; readonly_root' EXIT HUP INT TERM
 "$package/bin/aibox" -speaker-endpoint "$action" -speaker-config "$cfg" -speaker-backup "$state/endpoint-backup.json"
 guard=/etc/init.d/S99zzaibox-guard
 if [ "$action" = apply ]; then
@@ -32,7 +34,7 @@ else
  rm -f "$guard"
 fi
 sync
-mount -o remount,ro /
+readonly_root
 trap - EXIT HUP INT TERM
 /system/vendor/quasar/q restart >/dev/null 2>&1 || true
 [ "$action" = apply ] && sh /etc/init.d/S99zzaibox-guard start
