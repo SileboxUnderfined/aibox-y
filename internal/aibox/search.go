@@ -89,7 +89,7 @@ func (r *Resolver) backendReady(key string) bool {
 	r.mu.Lock()
 	m, ok := r.opt.Models[key]
 	r.mu.Unlock()
-	return ok && canSearch(m.Config) && os.Getenv(m.Config.APIKeyEnv) != ""
+	return ok && os.Getenv(m.Config.APIKeyEnv) != ""
 }
 
 func canSearch(cfg providers.Config) bool { return providers.NativeSearch(cfg) != "" }
@@ -119,7 +119,8 @@ func (b backendSearcher) Search(ctx context.Context, query string) (string, erro
 }
 
 // searchWith asks one backend. A search model gets the query alone, finds
-// the answer with its own search and reports the facts briefly.
+// the answer with its own search and reports the facts briefly. A provider
+// AIBox does not know is asked as is: it is expected to search by itself.
 func (r *Resolver) searchWith(ctx context.Context, key, query string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, backendTimeout)
 	defer cancel()

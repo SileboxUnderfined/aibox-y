@@ -81,7 +81,7 @@ func New(opt Options) *Resolver {
 		}
 		opt.Models[cp.Key] = m
 	}
-	if _, ok := opt.Models[r.state.Model]; !ok {
+	if m, ok := opt.Models[r.state.Model]; !ok || m.SearchOnly {
 		r.state.Model = opt.DefaultModel
 	}
 	for key, id := range r.state.ModelIDs {
@@ -475,6 +475,9 @@ func (r *Resolver) modelPrefix(words []string) (string, int) {
 		spoken := strings.Join(words[:n], " ")
 		for _, k := range sortedKeys(r.opt.Models) {
 			m := r.opt.Models[k]
+			if m.SearchOnly {
+				continue
+			}
 			for _, name := range append([]string{m.Key, m.Title}, m.Aliases...) {
 				if name == "" {
 					continue

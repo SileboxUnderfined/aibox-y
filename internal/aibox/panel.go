@@ -27,6 +27,7 @@ type ProviderInfo struct {
 	SearchMode   string `json:"search_mode"`
 	Search       string `json:"search"`
 	NativeSearch bool   `json:"native_search"`
+	SearchOnly   bool   `json:"search_only"`
 }
 
 type Settings struct {
@@ -48,6 +49,8 @@ type SearchBackend struct {
 	Key   string `json:"key"`
 	Title string `json:"title"`
 	Ready bool   `json:"ready"`
+	// Known is false for a chat model AIBox does not know to search.
+	Known bool `json:"known"`
 }
 
 // Update carries the fields the panel changed; nil means unchanged.
@@ -76,7 +79,7 @@ func (r *Resolver) Settings() Settings {
 			mode = searchAuto
 		}
 		models = append(models, *m)
-		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != "", BaseURL: m.Config.BaseURL, Aliases: m.Aliases, Custom: r.isCustom(key) >= 0, SearchMode: mode, NativeSearch: providers.NativeSearch(m.Config) != ""})
+		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != "", BaseURL: m.Config.BaseURL, Aliases: m.Aliases, Custom: r.isCustom(key) >= 0, SearchOnly: m.SearchOnly, SearchMode: mode, NativeSearch: providers.NativeSearch(m.Config) != ""})
 	}
 	r.mu.Unlock()
 	for i, m := range models {
@@ -86,10 +89,21 @@ func (r *Resolver) Settings() Settings {
 	if r.opt.Search != nil {
 		s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: tavilyBackend, Title: "Tavily", Ready: r.backendReady(tavilyBackend)})
 	}
-	for _, m := range models {
-		if canSearch(m.Config) {
-			s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: m.Key, Title: m.spoken() + " (" + m.Config.Model + ")", Ready: r.backendReady(m.Key)})
+	// Search providers first, then models known to search, then the rest:
+	// any model may search, the user knows what theirs can do.
+	rank := func(m Model) int {
+		switch {
+		case m.SearchOnly:
+			return 0
+		case canSearch(m.Config):
+			return 1
 		}
+		return 2
+	}
+	sorted := slices.Clone(models)
+	slices.SortStableFunc(sorted, func(a, b Model) int { return rank(a) - rank(b) })
+	for _, m := range sorted {
+		s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: m.Key, Title: m.spoken() + " (" + m.Config.Model + ")", Ready: r.backendReady(m.Key), Known: rank(m) < 2})
 	}
 	return s
 }
@@ -105,7 +119,7 @@ func (r *Resolver) Apply(u Update) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if u.Active != nil {
-		if _, ok := r.opt.Models[*u.Active]; !ok {
+		if m, ok := r.opt.Models[*u.Active]; !ok || m.SearchOnly {
 			return errors.New("unknown provider")
 		}
 	}
@@ -132,9 +146,8 @@ func (r *Resolver) Apply(u Update) error {
 	if u.SearchOrder != nil {
 		var order []string
 		for _, key := range *u.SearchOrder {
-			m, ok := r.opt.Models[key]
-			if key != tavilyBackend && (!ok || !canSearch(m.Config)) {
-				return errors.New("this model cannot search: " + key)
+			if _, ok := r.opt.Models[key]; key != tavilyBackend && !ok {
+				return errors.New("unknown search provider: " + key)
 			}
 			if !slices.Contains(order, key) {
 				order = append(order, key)

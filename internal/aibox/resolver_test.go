@@ -451,8 +451,8 @@ func TestSearchModelsInOrder(t *testing.T) {
 		"sonar":    {Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar", APIKeyEnv: "SONAR_KEY"}, Completer: sonar},
 		"gpt":      {Key: "gpt", Config: providers.Config{BaseURL: "https://api.openai.com/v1", APIKeyEnv: "GPT_KEY"}, Completer: gpt},
 	}, DefaultModel: "deepseek", Store: store, Search: &fakeSearcher{}})
-	if err := r.Apply(Update{SearchOrder: &[]string{"deepseek"}}); err == nil {
-		t.Fatal("a model without search accepted as a search backend")
+	if err := r.Apply(Update{SearchOrder: &[]string{"bing"}}); err == nil {
+		t.Fatal("an unknown search backend accepted")
 	}
 	if err := r.Apply(Update{SearchOrder: &[]string{"tavily", "sonar", "gpt"}}); err != nil {
 		t.Fatal(err)
@@ -472,7 +472,7 @@ func TestSearchModelsInOrder(t *testing.T) {
 	for _, b := range r.Settings().SearchBackends {
 		backends = append(backends, b.Key)
 	}
-	if strings.Join(backends, ",") != "tavily,gpt,sonar" {
+	if strings.Join(backends, ",") != "tavily,gpt,sonar,deepseek" {
 		t.Fatalf("backends = %v", backends)
 	}
 }
@@ -483,5 +483,36 @@ func TestSonarSearchesByItself(t *testing.T) {
 	m := Model{Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar"}}
 	if got := r.searchFor(m).Mode; got != providers.SearchNative {
 		t.Fatalf("Sonar gets %q", got)
+	}
+}
+
+func TestSearchOnlyProvider(t *testing.T) {
+	r, llm, _ := setup(t)
+	t.Setenv("AIBOX_KEY_API_1", "k")
+	c, err := r.SaveProvider(CustomProvider{Title: "Поиск", BaseURL: "https://api.example.ru/v1", Model: "web-model", Aliases: []string{"поисковик"}, SearchOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchLLM := &searchLLM{}
+	r.opt.Models[c.Key].Completer = searchLLM
+	if order := r.Settings().SearchOrder; len(order) != 1 || order[0] != c.Key {
+		t.Fatalf("a new search provider should become the search backend: %v", order)
+	}
+	if err := r.Apply(Update{Active: &c.Key}); err == nil {
+		t.Fatal("search-only provider chosen to answer chats")
+	}
+	if _, answer := say(t, r, "Алиса, переключись на поисковик"); strings.Contains(answer, "Теперь отвечает") {
+		t.Fatalf("voice switched to a search-only provider: %q", answer)
+	}
+	if strings.Contains(r.modelNames(), "Поиск") {
+		t.Fatalf("search-only provider listed for chats: %s", r.modelNames())
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("chat model does not use the search provider: %q", search.Mode)
+	}
+	out, err := search.Searcher.Search(context.Background(), "новости")
+	if err != nil || out != "ответ новости" || len(searchLLM.calls) != 1 || len(llm.calls) != 0 {
+		t.Fatalf("out %q, err %v", out, err)
 	}
 }
