@@ -24,8 +24,12 @@ const (
 // tavilyBackend names Tavily in the search order; other entries are models.
 const tavilyBackend = "tavily"
 
-// backendTimeout leaves time for the next backend and the final answer.
-const backendTimeout = 20 * time.Second
+// The speaker gives up about 15 s after the user stops talking, so the whole
+// search must leave room for the model's first call and its final answer.
+const (
+	backendTimeout = 8 * time.Second
+	searchBudget   = 9 * time.Second
+)
 
 func validSearchMode(mode string) bool {
 	switch mode {
@@ -102,6 +106,8 @@ type backendSearcher struct {
 }
 
 func (b backendSearcher) Search(ctx context.Context, query string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, searchBudget)
+	defer cancel()
 	err := errors.New("no search backend")
 	for _, key := range b.keys {
 		var out string
