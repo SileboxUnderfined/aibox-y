@@ -37,6 +37,10 @@ type state struct {
 	SearchOrder []string `json:"search_order,omitempty"`
 	// SearchModes is per model: "auto" (default), "tool", "native" or "off".
 	SearchModes map[string]string `json:"search_modes,omitempty"`
+	// The shared memory is on by default, so the flags say what is off.
+	MemoryOff      bool     `json:"memory_off,omitempty"`
+	MemoryAutoOff  bool     `json:"memory_auto_off,omitempty"`
+	MemoryExcluded []string `json:"memory_excluded,omitempty"` // models that never see the facts
 }
 
 func loadState(path string) state {

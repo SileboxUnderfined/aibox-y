@@ -28,6 +28,10 @@ type Backend interface {
 	ListModels(ctx context.Context, provider string) ([]string, error)
 	SaveProvider(aibox.CustomProvider) (aibox.CustomProvider, error)
 	RemoveProvider(key string) (string, error)
+	AddFact(text string) error
+	EditFact(id, text string) error
+	DeleteFact(id string) error
+	ClearFacts() error
 }
 
 type Server struct {
@@ -73,6 +77,18 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, s.Backend.Settings())
+	})
+	mux.HandleFunc("POST /api/memory", func(w http.ResponseWriter, r *http.Request) {
+		s.fact(w, r, func(text string) error { return s.Backend.AddFact(text) })
+	})
+	mux.HandleFunc("PUT /api/memory/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s.fact(w, r, func(text string) error { return s.Backend.EditFact(r.PathValue("id"), text) })
+	})
+	mux.HandleFunc("DELETE /api/memory/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s.reply(w, s.Backend.DeleteFact(r.PathValue("id")))
+	})
+	mux.HandleFunc("DELETE /api/memory", func(w http.ResponseWriter, _ *http.Request) {
+		s.reply(w, s.Backend.ClearFacts())
 	})
 	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
@@ -148,6 +164,26 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.saveKeys(map[string]string{saved.KeyEnv(): key}); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Backend.Settings())
+}
+
+func (s *Server) fact(w http.ResponseWriter, r *http.Request, change func(text string) error) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
+		return
+	}
+	s.reply(w, change(req.Text))
+}
+
+// reply answers a change with the new settings, or with its error.
+func (s *Server) reply(w http.ResponseWriter, err error) {
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

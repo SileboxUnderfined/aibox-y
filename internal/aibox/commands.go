@@ -26,7 +26,25 @@ const (
 	cmdQuick // "спроси [модель|нейросеть] X": a new saved chat that starts with question X
 	cmdSearchOn
 	cmdSearchOff
+	cmdRemember
+	cmdForgetFact
+	cmdForgetAll
+	cmdShowMemory
+	cmdMemoryOn
+	cmdMemoryOff
+	cmdAutoMemoryOn
+	cmdAutoMemoryOff
 )
+
+// isMemory marks commands that work only while the shared memory is on.
+func (k kind) isMemory() bool {
+	return k == cmdRemember || k == cmdForgetFact || k == cmdForgetAll || k == cmdShowMemory
+}
+
+// isMemorySwitch marks commands that turn the shared memory on and off.
+func (k kind) isMemorySwitch() bool {
+	return k == cmdMemoryOn || k == cmdMemoryOff || k == cmdAutoMemoryOn || k == cmdAutoMemoryOff
+}
 
 type command struct {
 	kind kind
@@ -42,6 +60,14 @@ var patterns = []struct {
 	{cmdContinue, regexp.MustCompile(`^(?:продолжи(?:ть|м)?|продолжаем|открой|открыть|вернись в|вернуться в|верни) чат (.+)$`)},
 	{cmdTemporary, regexp.MustCompile(`^(?:давай )?поговори(?:ть|м)(?: со мной)?$`)},
 	{cmdForget, regexp.MustCompile(`^(?:забудь|забыть|удали|удалить) чат (.+)$`)},
+	{cmdForgetAll, regexp.MustCompile(`^(?:(?:забудь|забудьте|сотри|удали) (?:все|всю) (?:обо мне|про меня|что (?:ты )?(?:знаешь|помнишь|запомнила) обо мне)|(?:очисти|сотри|удали) (?:всю )?память)$`)},
+	{cmdShowMemory, regexp.MustCompile(`^(?:что ты (?:обо мне |про меня )?(?:знаешь|помнишь|запомнила)(?: обо мне| про меня)?|что (?:есть )?в памяти|покажи память)$`)},
+	{cmdAutoMemoryOff, regexp.MustCompile(`^(?:выключи|отключи) (?:авто ?запоминание|запоминание)$`)},
+	{cmdAutoMemoryOn, regexp.MustCompile(`^(?:включи) (?:авто ?запоминание|запоминание)$`)},
+	{cmdMemoryOff, regexp.MustCompile(`^(?:выключи|отключи) (?:общую )?память$`)},
+	{cmdMemoryOn, regexp.MustCompile(`^включи (?:общую )?память$`)},
+	{cmdRemember, rememberPattern},
+	{cmdForgetFact, forgetFactPattern},
 	{cmdList, regexp.MustCompile(`^(?:список чатов|мои чаты|какие (?:у меня )?(?:есть )?чаты(?: есть)?)$`)},
 	{cmdWhichModel, regexp.MustCompile(`^(?:какая (?:сейчас )?модель(?: сейчас)?|список моделей|какие (?:есть )?модели(?: есть)?)$`)},
 	{cmdModel, regexp.MustCompile(`^(?:выбери|выбрать|смени|сменить|поставь|переключи|переключись на|используй)? ?модель (?:на )?(.+)$`)},
@@ -56,6 +82,12 @@ var patterns = []struct {
 // quickPattern starts a quick question, in normalized text. The neuro group
 // marks "спроси нейросеть", which never names a model.
 var quickPattern = regexp.MustCompile(`^(?:(?:спроси(?:те)?|задай(?:те)? вопрос)(?: у)?(?P<neuro> (?:нейросет[ьи]|нейронк[уеи]|ии))?|вопрос(?P<neuro2> (?:нейросет[ьи]|нейронк[уеи]|ии)))(?: (.+))?$`)
+
+// rememberPattern and forgetFactPattern keep the fact in their last group.
+var (
+	rememberPattern   = regexp.MustCompile(`^(?:запомни|запомните)(?: пожалуйста)?(?: что| обо мне| про меня)? (.+)$`)
+	forgetFactPattern = regexp.MustCompile(`^(?:забудь|забудьте)(?: пожалуйста)?(?: что| про| о| об)? (.+)$`)
+)
 
 // stopPhrases cut a spoken answer short; the chat stays open.
 var stopPhrases = regexp.MustCompile(`^(?:стоп|хватит|замолчи|помолчи|тихо|тише|подожди|погоди|достаточно|остановись|перестань|не надо|ладно|понятно|ясно)$`)
