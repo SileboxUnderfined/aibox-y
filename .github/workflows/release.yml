@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make release VERSION=${{ github.ref_name }}
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          size=$(du -h dist/aibox-pkg/bin/aibox | cut -f1)
+          cat > notes.md <<NOTES
+          Плагин YAM для Станции Мини 2 (linux/arm64). Бинарник после распаковки: ${size}.
+
+          \`\`\`bash
+          curl -LO https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/aibox-${TAG}-linux-arm64.tar.gz
+          scp -P 2222 aibox-${TAG}-linux-arm64.tar.gz root@<ip>:/tmp/
+          ssh -p 2222 root@<ip> 'cd /tmp && tar xzf aibox-${TAG}-linux-arm64.tar.gz && mv aibox-pkg /data/quazar/yam/data/plugins/aibox'
+          \`\`\`
+
+          Проверка: \`sha256sum -c SHA256SUMS --ignore-missing\`.
+          NOTES
+          prerelease=
+          case "$TAG" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$TAG" $prerelease --title "AIBox $TAG" --notes-file notes.md \
+            dist/aibox-$TAG-linux-arm64.tar.gz dist/aibox-$TAG-linux-arm64 dist/SHA256SUMS
