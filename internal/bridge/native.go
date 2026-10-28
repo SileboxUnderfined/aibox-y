@@ -139,7 +139,11 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		n.mu.Lock()
 		n.playbackDoneLocked(stat.GetRequestMessageId(), reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
 		n.mu.Unlock()
-		slog.Info("native_playback_status", "request", requestTag(stat.GetRequestMessageId()), "error_class", kind, "playback_reported", reported(timestamps.GetOnSoundPlayerBeginTime()) || reported(timestamps.GetOnPlayerBegin()), "finished_reported", reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
+		detail := []rune(stat.GetError())
+		if len(detail) > 160 {
+			detail = detail[:160]
+		}
+		slog.Info("native_playback_status", "request", requestTag(stat.GetRequestMessageId()), "error_class", kind, "error", string(detail), "playback_reported", reported(timestamps.GetOnSoundPlayerBeginTime()) || reported(timestamps.GetOnPlayerBegin()), "finished_reported", reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
 	}
 	if kind := f.Kind(); kind == "VoiceInput" || kind == "SpeechInput" {
 		if r, ok := n.resolver.(interface{ UncensoredASR() bool }); ok && r.UncensoredASR() {
