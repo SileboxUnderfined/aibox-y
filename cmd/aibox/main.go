@@ -26,6 +26,7 @@ import (
 	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
+	"aiboxy/internal/search"
 	"aiboxy/internal/web"
 )
 
@@ -41,6 +42,7 @@ type Config struct {
 	MaxHistory   int                         `json:"max_history"`
 	TimeoutSec   int                         `json:"request_timeout_seconds"`
 	KeepAntimat  bool                        `json:"keep_antimat"`
+	Search       *search.Config              `json:"search"`
 	Web          struct {
 		Enabled bool   `json:"enabled"`
 		Listen  string `json:"listen"`
@@ -117,10 +119,25 @@ func main() {
 			}
 			models[key] = &aibox.Model{Key: key, Title: pc.Title, Aliases: pc.Aliases, Config: pc, Completer: completer}
 		}
+		// Search is on by default; it only works once a key is set.
+		searchCfg := search.Config{}
+		if cfg.Search != nil {
+			searchCfg = *cfg.Search
+		}
+		searcher, err := search.New(searchCfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		provider := models[cfg.Provider].Completer
 		if *ask != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
+			if searcher.Ready() {
+				ctx = providers.WithSearch(ctx, providers.Search{Mode: providers.SearchTool, Searcher: searcher})
+			} else if providers.NativeSearch(models[cfg.Provider].Config) != "" {
+				ctx = providers.WithSearch(ctx, providers.Search{Mode: providers.SearchNative})
+			}
 			answer, err := provider.Complete(ctx, aibox.DefaultSystemPrompt, []providers.Message{{Role: "user", Content: *ask}})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -150,6 +167,7 @@ func main() {
 			MaxHistory:     cfg.MaxHistory,
 			RequestTimeout: time.Duration(cfg.TimeoutSec) * time.Second,
 			KeepAntimat:    cfg.KeepAntimat,
+			Search:         searcher,
 		})
 	}
 

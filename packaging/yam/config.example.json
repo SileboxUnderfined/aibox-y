@@ -14,6 +14,7 @@
     "claude": {"type": "anthropic", "model": "claude-opus-5-5", "effort": "low", "api_key_env": "ANTHROPIC_API_KEY", "max_tokens": 1024,
       "title": "Claude", "aliases": ["клод", "клауд", "клод опус"]}
   },
+  "search": {"provider": "tavily", "api_key_env": "TAVILY_API_KEY", "max_results": 4},
   "system_prompt": "",
   "web": {"enabled": true, "listen": ":8100"},
   "idle_minutes": 10,

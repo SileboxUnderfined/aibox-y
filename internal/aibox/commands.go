@@ -24,6 +24,8 @@ const (
 	cmdResetPrompt
 	cmdShowPrompt
 	cmdQuick // "спроси [модель|нейросеть] X": a new saved chat that starts with question X
+	cmdSearchOn
+	cmdSearchOff
 	cmdRemember
 	cmdForgetFact
 	cmdForgetAll
@@ -72,6 +74,8 @@ var patterns = []struct {
 	{cmdModelSwitch, regexp.MustCompile(`^(?:переключись на|переключи на|переключиться на|используй|давай) (.+)$`)},
 	{cmdResetPrompt, regexp.MustCompile(`^(?:сбрось|сбросить|удали|убери|очисти) (?:системный промпт|промпт|роль)$`)},
 	{cmdShowPrompt, regexp.MustCompile(`^(?:какой (?:сейчас )?(?:системный )?промпт|какая (?:у тебя )?роль)$`)},
+	{cmdSearchOn, regexp.MustCompile(`^(?:включи|включить|разреши|верни) (?:нейросети )?(?:интернет|поиск в интернете)(?: (?:для )?нейросети)?$`)},
+	{cmdSearchOff, regexp.MustCompile(`^(?:выключи|выключить|отключи|отключить|запрети|убери) (?:нейросети )?(?:интернет|поиск в интернете)(?: (?:для )?нейросети)?$`)},
 	{cmdSetPrompt, regexp.MustCompile(`^(?:(?:установи |поставь |новый |смени )?системный промпт|(?:установи |новая |смени )роль|твоя роль) (?:на |это )?(.+)$`)},
 }
 
