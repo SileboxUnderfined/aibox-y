@@ -31,6 +31,10 @@
 
 Нужны root и SSH на колонке, aarch64-ядро и [YAM](https://hackalice.me/recipes/yam/). Проверено на Станции Мини 2 (прошивка 0.372.1.8).
 
+Готовый архив `aibox-<версия>-linux-arm64.tar.gz` и `SHA256SUMS` лежат в [Releases](https://github.com/SileboxUnderfined/aibox-y/releases); внутри та же папка `aibox-pkg`. Новый релиз собирается сам при пуше тега `v*` (например, `git tag v0.2.0 && git push origin v0.2.0`), тег с дефисом (`v0.2.0-rc1`) публикуется как пре-релиз.
+
+Или собрать самому:
+
 ```bash
 make package   # собирает dist/aibox-pkg
 tar czf - -C dist aibox-pkg | ssh -p 2222 root@<ip> 'cd /tmp && gzip -dc | tar xf - && mv aibox-pkg /data/quazar/yam/data/plugins/aibox'
