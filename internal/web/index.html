@@ -222,8 +222,8 @@ function render(s) {
   const sb = $("#searchBadge");
   sb.textContent = s.search_has_key ? "ключ задан" : "нет ключа";
   sb.className = "badge " + (s.search_has_key ? "ok" : "bad");
-  renderMemory(s.memory, s.providers);
   renderCommands(s.commands || []);
+  renderMemory(s.memory, s.providers);
   $("#user").value = s.user_prompt;
   $("#base").value = s.base_prompt || s.default_base_prompt;
 }
@@ -248,6 +248,7 @@ const sources = {voice: "голосом", model: "модель", panel: "в па
 function renderMemory(m, providers) {
   $("#memory").hidden = !m.available;
   if (!m.available) return;
+  m.facts = m.facts || []; m.excluded = m.excluded || [];
   $("#memOn").checked = m.enabled;
   $("#memAuto").checked = m.auto;
   const ex = $("#memExcluded");

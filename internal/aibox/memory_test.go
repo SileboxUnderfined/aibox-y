@@ -2,6 +2,7 @@ package aibox
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,4 +158,15 @@ func TestModelRemembersAndChatsSeeFacts(t *testing.T) {
 		t.Fatalf("settings = %+v", s)
 	}
 	waitTitles(t, r.opt.Store, 3)
+}
+
+func TestPanelEmptyMemoryIsList(t *testing.T) {
+	r, _, _ := setupMemory(t)
+	data, err := json.Marshal(r.Settings().Memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"facts":[]`) {
+		t.Fatalf("empty memory = %s", data)
+	}
 }

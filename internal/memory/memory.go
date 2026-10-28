@@ -59,7 +59,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) List() []Fact {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]Fact(nil), s.facts...)
+	return append([]Fact{}, s.facts...) // never nil: the panel reads it as a JSON list
 }
 
 // Add saves a fact; the same fact said again is not stored twice.
