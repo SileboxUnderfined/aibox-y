@@ -39,22 +39,26 @@
 
 ## Установка
 
-Нужны root и SSH на колонке, aarch64-ядро и [YAM](https://hackalice.me/recipes/yam/). Проверено на Станции Мини 2 (прошивка 0.372.1.8).
+Нужны root и SSH на колонке, aarch64-ядро и менеджер плагинов: [Luna](https://github.com/nyakokitsu/luna) (ставится через новый [YAM 0.2](https://github.com/nyakokitsu/yam): `yam install yam/luna`) или старый YAM 0.1 (`/data/quazar/yam`). Проверено на Станции Мини 2 (прошивка 0.372.1.8).
 
-Готовый архив `aibox-<версия>-linux-arm64.tar.gz` и `SHA256SUMS` лежат в [Releases](https://github.com/SileboxUnderfined/aibox-y/releases); внутри та же папка `aibox-pkg`. Новый релиз собирается сам при пуше тега `v*` (например, `git tag v0.2.0 && git push origin v0.2.0`), тег с дефисом (`v0.2.0-rc1`) публикуется как пре-релиз.
-
-Или собрать самому:
+Одна команда на компьютере (macOS или Linux) ставит или обновляет AIBox:
 
 ```bash
-make package   # собирает dist/aibox-pkg
-tar czf - -C dist aibox-pkg | ssh -p 2222 root@<ip> 'cd /tmp && gzip -dc | tar xf - && mv aibox-pkg /data/quazar/yam/data/plugins/aibox'
+curl -fsSL https://raw.githubusercontent.com/SileboxUnderfined/aibox-y/main/install.sh | sh -s -- --chat <ip колонки>
 ```
 
-На колонке:
+Установщик скачивает последний релиз из [Releases](https://github.com/SileboxUnderfined/aibox-y/releases), сверяет `SHA256SUMS`, по SSH (порт 2222, `--port`) кладёт плагин в папку Luna или старого YAM, смотря что запущено на колонке, и запускает его. В Luna он сам включает настройку «Разрешить бинарники плагинов»: без неё AIBox, как любая программа, не запустится. `--chat` включает чаты и переключает Алису на AIBox; без него Алиса продолжает ходить в Яндекс напрямую. Настройки, ключи и чаты в `/data/opt/aibox` при обновлении сохраняются. Ключи вписываются в веб-панели (ниже). `--version v0.2.0` ставит конкретный релиз, `--package dist/aibox-pkg` свою сборку (`make package`).
 
-1. `curl -X POST http://127.0.0.1:8099/api/plugins/aibox/toggle` и `.../service/enable`, `.../service/start` (или через веб-интерфейс YAM).
-2. Ключи в `/data/opt/aibox/secrets.env` (права 600), провайдер и режим в `/data/opt/aibox/config.json`.
-3. `sh /data/quazar/yam/data/plugins/aibox/aiboxctl.sh apply` переключает Алису на AIBox и перезапускает quasar. `rollback` возвращает как было, `status` показывает состояние.
+Через новый YAM (`.yampkg`) AIBox не ставится: Luna пока отклоняет бинарные плагины из YAM. Не запускайте установщик YAM с `--remove-old`: он удаляет `/data/quazar/yam` вместе с AIBox, если тот стоит в старом YAM.
+
+Без SSH можно загрузить `aibox-<версия>-linux-arm64.yap` из релиза через веб-интерфейс Luna или YAM на `:8099` и включить «Разрешить бинарники плагинов». На /data при этом нужно место на две копии плагина.
+
+На колонке (`<папка плагина>` это `/data/quazar/luna/data/plugins/aibox` или `/data/quazar/yam/data/plugins/aibox`):
+
+- `sh <папка плагина>/aiboxctl.sh rollback` возвращает Алису в Яндекс напрямую, `apply` снова переключает на AIBox, `status` показывает состояние.
+- Ключи лежат в `/data/opt/aibox/secrets.env` (права 600), провайдер и режим в `/data/opt/aibox/config.json`.
+
+Новый релиз собирается сам при пуше тега `v*` (например, `git tag v0.2.0 && git push origin v0.2.0`), тег с дефисом (`v0.2.0-rc1`) публикуется как пре-релиз.
 
 Выбранная модель, свой промпт и настройки памяти сохраняются в `/data/opt/aibox/state.json` и переживают перезапуск. Модели задаются в `providers`: у каждой есть `title` и `aliases`, по которым её узнают голосом; можно добавить несколько моделей одного провайдера. Базовый промпт с правилами для озвучки задаётся полем `system_prompt` (пустое значение = встроенный), голосовой промпт добавляется к нему.
 
