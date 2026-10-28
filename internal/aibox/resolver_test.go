@@ -516,3 +516,27 @@ func TestSearchOnlyProvider(t *testing.T) {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 }
+
+func TestCustomProviderSearches(t *testing.T) {
+	r, _, _ := setup(t)
+	t.Setenv("AIBOX_KEY_API_1", "k")
+	c, err := r.SaveProvider(CustomProvider{Title: "Поиск", BaseURL: "https://api.example.com/v1", Model: "web-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := &searchLLM{}
+	r.opt.Models[c.Key].Completer = web
+	if err := r.Apply(Update{SearchOrder: &[]string{c.Key}}); err != nil {
+		t.Fatalf("a custom API refused as a search backend: %v", err)
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("DeepSeek with a custom search API gets %q", search.Mode)
+	}
+	if out, err := search.Searcher.Search(context.Background(), "курс доллара"); err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if len(web.systems) != 1 || !strings.Contains(web.systems[0], "поисковый помощник") {
+		t.Fatalf("custom API not asked as a searcher: %v", web.systems)
+	}
+}
