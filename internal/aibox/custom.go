@@ -3,6 +3,7 @@ package aibox
 import (
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,8 @@ type CustomProvider struct {
 	Model     string   `json:"model"`
 	Aliases   []string `json:"aliases,omitempty"`
 	MaxTokens int      `json:"max_tokens,omitempty"`
+	// SearchOnly keeps the provider out of chats: it only searches the web.
+	SearchOnly bool `json:"search_only,omitempty"`
 }
 
 // KeyEnv is where the provider's API key lives in secrets.env.
@@ -39,7 +42,7 @@ func (c CustomProvider) model() (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Model{Key: c.Key, Title: c.Title, Aliases: c.Aliases, Config: cfg, Completer: completer}, nil
+	return &Model{Key: c.Key, Title: c.Title, Aliases: c.Aliases, Config: cfg, Completer: completer, SearchOnly: c.SearchOnly}, nil
 }
 
 func (c *CustomProvider) validate() error {
@@ -112,6 +115,15 @@ func (r *Resolver) SaveProvider(c CustomProvider) (CustomProvider, error) {
 	} else {
 		r.state.Custom = append(r.state.Custom, c)
 	}
+	if c.SearchOnly {
+		if r.state.Model == c.Key {
+			r.state.Model = r.opt.DefaultModel
+		}
+		if len(r.state.SearchOrder) == 0 {
+			// The first search provider starts searching without more setup.
+			r.state.SearchOrder = []string{c.Key}
+		}
+	}
 	delete(r.state.ModelIDs, c.Key)
 	r.opt.Models[c.Key] = m
 	return c, saveState(r.opt.StatePath, r.state)
@@ -129,6 +141,8 @@ func (r *Resolver) RemoveProvider(key string) (string, error) {
 	r.state.Custom = append(r.state.Custom[:index], r.state.Custom[index+1:]...)
 	delete(r.opt.Models, key)
 	delete(r.state.ModelIDs, key)
+	delete(r.state.SearchModes, key)
+	r.state.SearchOrder = slices.DeleteFunc(r.state.SearchOrder, func(k string) bool { return k == key })
 	if r.state.Model == key {
 		r.state.Model = r.opt.DefaultModel
 	}

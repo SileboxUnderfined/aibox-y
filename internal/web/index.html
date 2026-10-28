@@ -52,6 +52,16 @@ code{font-size:12px}
 </section>
 
 <section>
+<h2>Интернет</h2>
+<div class="head"><label><input type="checkbox" id="searchOn" style="width:auto"> Разрешить нейросетям искать в интернете</label><span class="badge" id="searchBadge"></span></div>
+<p class="hint">Когда модели нужно что-то узнать, она сама отправляет запрос поисковику, а ответ пересказывает голосом. Так ищет любая модель, включая DeepSeek.</p>
+<div class="grid" id="order"></div>
+<p class="hint">Поисковики по порядку: если первый не ответил, спросим следующего. Свой API для этого можно добавить ниже с галочкой «Только для поиска». Подойдут модели со своим поиском: Perplexity Sonar (свой API <code>https://api.perplexity.ai</code> или <code>perplexity/sonar</code> в OpenRouter), ChatGPT, Claude, OpenRouter. Или Tavily по ключу:</p>
+<div class="row"><input id="searchKey" type="password" autocomplete="off"></div>
+<p class="hint">Голосом: «Алиса, включи интернет» или «выключи интернет».</p>
+</section>
+
+<section>
 <h2 id="formTitle">Добавить свой API</h2>
 <div class="grid">
 <label>Название<input id="cpTitle" placeholder="Например: Groq"></label>
@@ -60,6 +70,7 @@ code{font-size:12px}
 <label>Модель<input id="cpModel" placeholder="llama-3.3-70b-versatile"></label>
 <label>Ключ<input id="cpKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если не нужен"></label>
 <label class="wide">Как называть голосом<input id="cpAliases" placeholder="грок, грук"></label>
+<label class="wide" style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="cpSearchOnly" style="width:auto"> Только для поиска в интернете: в чатах не отвечает, ищет по просьбе основной модели</label>
 </div>
 <div class="row"><button class="primary" id="cpSave" type="button">Добавить</button><button id="cpCancel" type="button" hidden>Отмена</button></div>
 <p class="hint">Адрес — до <code>/v1</code>, без <code>/chat/completions</code>. Подойдут Groq, Together, Mistral, Ollama или LM Studio в локальной сети и любые другие с OpenAI-совместимым API. Потом: «Алиса, переключись на …».</p>
@@ -102,7 +113,8 @@ function render(s) {
       </div>
       <div class="row"><input class="model" list="" autocomplete="off"><button type="button" class="load">Загрузить список</button></div>
       <datalist></datalist>
-      <div class="row"><input class="key" type="password" autocomplete="off"></div>`;
+      <div class="row"><input class="key" type="password" autocomplete="off"></div>
+      <div class="row"><select class="search"></select></div>`;
     el.querySelector(".t").textContent = p.title;
     el.querySelector(".kind").textContent = (p.type === "anthropic" ? "Anthropic API" : "OpenAI-совместимый API") + (p.custom ? " · " + p.base_url : "");
     if (p.custom) {
@@ -119,6 +131,10 @@ function render(s) {
     }
     const radio = el.querySelector("input[type=radio]");
     radio.value = p.key; radio.checked = p.key === s.active;
+    if (p.search_only) {
+      radio.disabled = true;
+      el.querySelector(".kind").textContent += " · только поиск";
+    }
     const badge = el.querySelector(".badge");
     badge.textContent = p.has_key ? "ключ задан" : "нет ключа";
     badge.classList.add(p.has_key ? "ok" : "bad");
@@ -129,6 +145,19 @@ function render(s) {
     const key = el.querySelector(".key");
     key.dataset.env = p.key_env;
     key.placeholder = p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + p.key_env;
+    const search = el.querySelector(".search");
+    search.dataset.provider = p.key;
+    const modes = [["auto", "Интернет: автоматически"], ["tool", "Интернет: через поисковик"], ["native", "Интернет: свой поиск провайдера"], ["off", "Интернет: выключен"]];
+    for (const [v, t] of modes) {
+      if (v === "native" && !p.native_search) continue;
+      const o = document.createElement("option"); o.value = v; o.textContent = t; search.append(o);
+    }
+    search.value = p.search_mode;
+    if (p.search_only) search.hidden = true;
+    if (!p.search_only) {
+      const now = {tool: "сейчас ищет через поисковик", native: "сейчас ищет своим поиском"}[p.search] || "сейчас без интернета";
+      el.querySelector(".kind").textContent += " · " + now;
+    }
     el.querySelector(".load").onclick = async ev => {
       ev.target.disabled = true; status("Загружаю модели " + p.title + "…");
       try {
@@ -142,6 +171,28 @@ function render(s) {
     };
     box.append(el);
   }
+  $("#searchOn").checked = s.search_on;
+  const order = $("#order");
+  order.textContent = "";
+  for (let i = 0; i < 3; i++) {
+    const label = document.createElement("label");
+    label.textContent = i === 0 ? "Поисковик" : "Запасной " + i;
+    const sel = document.createElement("select");
+    sel.className = "backend";
+    const none = document.createElement("option"); none.value = ""; none.textContent = "—"; sel.append(none);
+    for (const b of s.search_backends || []) {
+      const o = document.createElement("option"); o.value = b.key;
+      o.textContent = b.title + (b.ready ? "" : " · нет ключа") + (b.known ? "" : " · сама не ищет?"); sel.append(o);
+    }
+    sel.value = (s.search_order || [])[i] || "";
+    label.append(sel); order.append(label);
+  }
+  const sk = $("#searchKey");
+  sk.dataset.env = s.search_key_env; sk.value = "";
+  sk.placeholder = s.search_has_key ? "Новый ключ Tavily (оставьте пустым, чтобы не менять)" : "Вставьте ключ " + s.search_key_env;
+  const sb = $("#searchBadge");
+  sb.textContent = s.search_has_key ? "ключ задан" : "нет ключа";
+  sb.className = "badge " + (s.search_has_key ? "ok" : "bad");
   $("#user").value = s.user_prompt;
   $("#base").value = s.base_prompt || s.default_base_prompt;
 }
@@ -156,6 +207,7 @@ function fillForm(p) {
   $("#cpURL").value = p ? p.base_url : "";
   $("#cpModel").value = p ? p.model : "";
   $("#cpAliases").value = p ? (p.aliases || []).join(", ") : "";
+  $("#cpSearchOnly").checked = p ? !!p.search_only : false;
   $("#cpKey").value = "";
   $("#cpKey").placeholder = p && p.has_key ? "Новый ключ (оставьте пустым, чтобы не менять)" : "Оставьте пустым, если не нужен";
   $("#formTitle").textContent = p ? "Изменить " + p.title : "Добавить свой API";
@@ -167,7 +219,7 @@ $("#cpCancel").onclick = () => fillForm(null);
 $("#cpSave").onclick = async () => {
   const body = {key: editing, title: $("#cpTitle").value, type: $("#cpType").value, base_url: $("#cpURL").value,
     model: $("#cpModel").value, api_key: $("#cpKey").value.trim(),
-    aliases: $("#cpAliases").value.split(",").map(a => a.trim()).filter(Boolean)};
+    aliases: $("#cpAliases").value.split(",").map(a => a.trim()).filter(Boolean), search_only: $("#cpSearchOnly").checked};
   status("Сохраняю API…");
   try { render(await api("/api/providers", {method: "POST", body: JSON.stringify(body)})); fillForm(null); status("API сохранён. Выберите его в списке моделей и нажмите «Сохранить»."); }
   catch (e) { status("Ошибка: " + e.message, true); }
@@ -184,6 +236,14 @@ $("#save").onclick = async () => {
     if (m.value.trim() && m.value.trim() !== orig) body.model_ids[m.dataset.provider] = m.value.trim();
   }
   for (const k of document.querySelectorAll(".key")) if (k.value.trim()) body.keys[k.dataset.env] = k.value.trim();
+  if ($("#searchKey").value.trim()) body.keys[$("#searchKey").dataset.env] = $("#searchKey").value.trim();
+  body.search_on = $("#searchOn").checked;
+  body.search_order = [...document.querySelectorAll(".backend")].map(b => b.value).filter(Boolean);
+  body.search_modes = {};
+  for (const sel of document.querySelectorAll(".search")) {
+    const orig = data.providers.find(p => p.key === sel.dataset.provider).search_mode;
+    if (sel.value !== orig) body.search_modes[sel.dataset.provider] = sel.value;
+  }
   body.user_prompt = $("#user").value;
   body.base_prompt = $("#base").value;
   status("Сохраняю…");

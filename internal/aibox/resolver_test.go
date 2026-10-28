@@ -364,9 +364,199 @@ func TestModelFailureFallsBackToAlice(t *testing.T) {
 	}
 }
 
-func TestStopOverAnswerKeepsChat(t *testing.T) {
+type searchLLM struct {
+	fakeLLM
+	modes []string
+}
+
+func (f *searchLLM) Complete(ctx context.Context, system string, m []providers.Message) (string, error) {
+	f.modes = append(f.modes, providers.SearchMode(ctx))
+	return f.fakeLLM.Complete(ctx, system, m)
+}
+
+type fakeSearcher struct{ ready bool }
+
+func (f *fakeSearcher) Search(context.Context, string) (string, error) { return "", nil }
+func (f *fakeSearcher) Ready() bool                                    { return f.ready }
+func (f *fakeSearcher) KeyEnv() string                                 { return "TAVILY_API_KEY" }
+
+func TestSearchModes(t *testing.T) {
+	store, _ := chats.Open(t.TempDir())
+	deepseek, claude := &searchLLM{}, &searchLLM{}
+	searcher := &fakeSearcher{}
+	r := New(Options{Models: map[string]*Model{
+		"deepseek": {Key: "deepseek", Title: "DeepSeek", Config: providers.Config{BaseURL: "https://api.deepseek.com/v1"}, Completer: deepseek},
+		"claude":   {Key: "claude", Title: "Claude", Aliases: []string{"клод"}, Config: providers.Config{Type: "anthropic"}, Completer: claude},
+	}, DefaultModel: "deepseek", Store: store, Search: searcher})
+
+	say(t, r, "Алиса, поговорим")
+	say(t, r, "какая погода")
+	if deepseek.modes[0] != "" {
+		t.Fatalf("DeepSeek without a search key searched: %q", deepseek.modes[0])
+	}
+	if strings.Contains(deepseek.systems[0], "поиск в интернете") {
+		t.Fatal("search prompt added without search")
+	}
+	say(t, r, "переключись на клод")
+	say(t, r, "какая погода")
+	if claude.modes[0] != providers.SearchNative {
+		t.Fatalf("Claude without a key should use its own search, got %q", claude.modes[0])
+	}
+	if !strings.Contains(claude.systems[0], "Сегодня ") {
+		t.Fatal("no date in the search prompt")
+	}
+	searcher.ready = true
+	say(t, r, "а завтра")
+	if claude.modes[1] != providers.SearchTool {
+		t.Fatalf("with a key auto should use our search, got %q", claude.modes[1])
+	}
+	if err := r.Apply(Update{SearchModes: map[string]string{"claude": "native"}}); err != nil {
+		t.Fatal(err)
+	}
+	say(t, r, "а послезавтра")
+	if claude.modes[2] != providers.SearchNative {
+		t.Fatalf("native setting ignored: %q", claude.modes[2])
+	}
+	if _, answer := say(t, r, "выключи интернет"); !strings.Contains(answer, "Выключила") {
+		t.Fatalf("answer = %q", answer)
+	}
+	say(t, r, "ещё вопрос")
+	if claude.modes[3] != "" {
+		t.Fatalf("search still on: %q", claude.modes[3])
+	}
+	if r.Settings().SearchOn {
+		t.Fatal("panel shows search on")
+	}
+	if _, answer := say(t, r, "включи интернет"); !strings.Contains(answer, "Включила") {
+		t.Fatalf("answer = %q", answer)
+	}
+	if err := r.Apply(Update{SearchModes: map[string]string{"claude": "warp"}}); err == nil {
+		t.Fatal("bad mode accepted")
+	}
+}
+
+type failingLLM struct{ calls int }
+
+func (f *failingLLM) Complete(context.Context, string, []providers.Message) (string, error) {
+	f.calls++
+	return "", context.DeadlineExceeded
+}
+
+func TestSearchModelsInOrder(t *testing.T) {
+	store, _ := chats.Open(t.TempDir())
+	t.Setenv("SONAR_KEY", "k")
+	t.Setenv("GPT_KEY", "k")
+	sonar, gpt := &failingLLM{}, &searchLLM{}
+	r := New(Options{Models: map[string]*Model{
+		"deepseek": {Key: "deepseek", Config: providers.Config{BaseURL: "https://api.deepseek.com/v1"}, Completer: &searchLLM{}},
+		"sonar":    {Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar", APIKeyEnv: "SONAR_KEY"}, Completer: sonar},
+		"gpt":      {Key: "gpt", Config: providers.Config{BaseURL: "https://api.openai.com/v1", APIKeyEnv: "GPT_KEY"}, Completer: gpt},
+	}, DefaultModel: "deepseek", Store: store, Search: &fakeSearcher{}})
+	if err := r.Apply(Update{SearchOrder: &[]string{"bing"}}); err == nil {
+		t.Fatal("an unknown search backend accepted")
+	}
+	if err := r.Apply(Update{SearchOrder: &[]string{"tavily", "sonar", "gpt"}}); err != nil {
+		t.Fatal(err)
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("DeepSeek with search models gets %q", search.Mode)
+	}
+	out, err := search.Searcher.Search(context.Background(), "курс доллара")
+	if err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if sonar.calls != 1 || len(gpt.modes) != 1 || gpt.modes[0] != providers.SearchNative || !strings.Contains(gpt.systems[0], "поисковый помощник") {
+		t.Fatalf("Tavily without a key must be skipped, Sonar tried, GPT asked with its own search: sonar %d, gpt %v", sonar.calls, gpt.modes)
+	}
+	var backends []string
+	for _, b := range r.Settings().SearchBackends {
+		backends = append(backends, b.Key)
+	}
+	if strings.Join(backends, ",") != "tavily,gpt,sonar,deepseek" {
+		t.Fatalf("backends = %v", backends)
+	}
+}
+
+func TestSonarSearchesByItself(t *testing.T) {
+	r, _, _ := setup(t)
+	r.opt.Search = &fakeSearcher{ready: true}
+	m := Model{Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar"}}
+	if got := r.searchFor(m).Mode; got != providers.SearchNative {
+		t.Fatalf("Sonar gets %q", got)
+	}
+}
+
+func TestSearchOnlyProvider(t *testing.T) {
 	r, llm, _ := setup(t)
+	t.Setenv("AIBOX_KEY_API_1", "k")
+	c, err := r.SaveProvider(CustomProvider{Title: "Поиск", BaseURL: "https://api.example.ru/v1", Model: "web-model", Aliases: []string{"поисковик"}, SearchOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchLLM := &searchLLM{}
+	r.opt.Models[c.Key].Completer = searchLLM
+	if order := r.Settings().SearchOrder; len(order) != 1 || order[0] != c.Key {
+		t.Fatalf("a new search provider should become the search backend: %v", order)
+	}
+	if err := r.Apply(Update{Active: &c.Key}); err == nil {
+		t.Fatal("search-only provider chosen to answer chats")
+	}
+	if _, answer := say(t, r, "Алиса, переключись на поисковик"); strings.Contains(answer, "Теперь отвечает") {
+		t.Fatalf("voice switched to a search-only provider: %q", answer)
+	}
+	if strings.Contains(r.modelNames(), "Поиск") {
+		t.Fatalf("search-only provider listed for chats: %s", r.modelNames())
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("chat model does not use the search provider: %q", search.Mode)
+	}
+	out, err := search.Searcher.Search(context.Background(), "новости")
+	if err != nil || out != "ответ новости" || len(searchLLM.calls) != 1 || len(llm.calls) != 0 {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestCustomProviderSearches(t *testing.T) {
+	r, _, _ := setup(t)
+	t.Setenv("AIBOX_KEY_API_1", "k")
+	c, err := r.SaveProvider(CustomProvider{Title: "Поиск", BaseURL: "https://api.example.com/v1", Model: "web-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := &searchLLM{}
+	r.opt.Models[c.Key].Completer = web
+	if err := r.Apply(Update{SearchOrder: &[]string{c.Key}}); err != nil {
+		t.Fatalf("a custom API refused as a search backend: %v", err)
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("DeepSeek with a custom search API gets %q", search.Mode)
+	}
+	if out, err := search.Searcher.Search(context.Background(), "курс доллара"); err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if len(web.systems) != 1 || !strings.Contains(web.systems[0], "поисковый помощник") {
+		t.Fatalf("custom API not asked as a searcher: %v", web.systems)
+	}
+}
+
+func TestStopOverAnswerKeepsChat(t *testing.T) {
+	r, llm, store := setup(t)
 	say(t, r, "Алиса, спроси, как работает двигатель")
+	// The title is asked in the background: wait for it, so that it does not
+	// land among the calls counted below.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if list, _ := store.List(); len(list) == 1 && list[0].Name == "Космос" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("chat not titled")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	over := bridge.WithInterrupted(context.Background())
 	for _, stop := range []string{"Алиса, стоп", "хватит", "замолчи"} {
 		res, err := r.Resolve(over, stop)
