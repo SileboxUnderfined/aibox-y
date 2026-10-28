@@ -87,12 +87,21 @@ func (r *Resolver) backendReady(key string) bool {
 		return r.opt.Search != nil && r.opt.Search.Ready()
 	}
 	r.mu.Lock()
-	m, ok := r.opt.Models[key]
-	r.mu.Unlock()
-	return ok && canSearch(m.Config) && os.Getenv(m.Config.APIKeyEnv) != ""
+	defer r.mu.Unlock()
+	if !r.canSearch(key) {
+		return false
+	}
+	// A custom API may need no key at all.
+	return r.isCustom(key) >= 0 || os.Getenv(r.opt.Models[key].Config.APIKeyEnv) != ""
 }
 
-func canSearch(cfg providers.Config) bool { return providers.NativeSearch(cfg) != "" }
+// canSearch tells whether a model may run web_search: one with its own
+// search, or any custom API, which the user adds for a model that searches
+// by itself (AIBox cannot tell that from its address). r.mu must be held.
+func (r *Resolver) canSearch(key string) bool {
+	m, ok := r.opt.Models[key]
+	return ok && (providers.NativeSearch(m.Config) != "" || r.isCustom(key) >= 0)
+}
 
 // backendSearcher runs web_search through the search order: the first
 // backend that answers wins, so a second one covers a failing first.

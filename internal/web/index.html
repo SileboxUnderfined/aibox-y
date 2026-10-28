@@ -56,7 +56,7 @@ code{font-size:12px}
 <div class="head"><label><input type="checkbox" id="searchOn" style="width:auto"> Разрешить нейросетям искать в интернете</label><span class="badge" id="searchBadge"></span></div>
 <p class="hint">Когда модели нужно что-то узнать, она сама отправляет запрос поисковику, а ответ пересказывает голосом. Так ищет любая модель, включая DeepSeek.</p>
 <div class="grid" id="order"></div>
-<p class="hint">Поисковики по порядку: если первый не ответил, спросим следующего. Подойдут модели со своим поиском: Perplexity Sonar (свой API <code>https://api.perplexity.ai</code> или <code>perplexity/sonar</code> в OpenRouter), ChatGPT, Claude, OpenRouter. Или Tavily по ключу:</p>
+<p class="hint">Поисковики по порядку: если первый не ответил, спросим следующего. Подойдут модели со своим поиском: Perplexity Sonar (свой API <code>https://api.perplexity.ai</code> или <code>perplexity/sonar</code> в OpenRouter), ChatGPT, Claude, OpenRouter, а также любой свой API (раздел «Добавить свой API») с моделью, которая сама ищет в интернете: он будет только искать, а разговаривать продолжит модель, выбранная выше. Или Tavily по ключу:</p>
 <div class="row"><input id="searchKey" type="password" autocomplete="off"></div>
 <p class="hint">Голосом: «Алиса, включи интернет» или «выключи интернет».</p>
 </section>

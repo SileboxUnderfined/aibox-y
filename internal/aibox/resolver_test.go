@@ -2,6 +2,7 @@ package aibox
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -483,5 +484,39 @@ func TestSonarSearchesByItself(t *testing.T) {
 	m := Model{Key: "sonar", Config: providers.Config{BaseURL: "https://api.perplexity.ai", Model: "sonar"}}
 	if got := r.searchFor(m).Mode; got != providers.SearchNative {
 		t.Fatalf("Sonar gets %q", got)
+	}
+}
+
+func TestCustomProviderSearches(t *testing.T) {
+	r, _, _ := setup(t)
+	c, err := r.SaveProvider(CustomProvider{Title: "Поиск", BaseURL: "https://api.example.com/v1", Model: "web-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := &searchLLM{}
+	r.opt.Models[c.Key].Completer = web
+	if err := r.Apply(Update{SearchOrder: &[]string{c.Key}}); err != nil {
+		t.Fatalf("a custom API refused as a search backend: %v", err)
+	}
+	deepseek := "deepseek"
+	if err := r.Apply(Update{Active: &deepseek}); err != nil {
+		t.Fatal(err)
+	}
+	search := r.searchFor(r.model())
+	if search.Mode != providers.SearchTool {
+		t.Fatalf("DeepSeek with a custom search API gets %q", search.Mode)
+	}
+	if out, err := search.Searcher.Search(context.Background(), "курс доллара"); err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if len(web.systems) != 1 || !strings.Contains(web.systems[0], "поисковый помощник") {
+		t.Fatalf("custom API not asked as a searcher: %v", web.systems)
+	}
+	var backends []string
+	for _, b := range r.Settings().SearchBackends {
+		backends = append(backends, b.Key+":"+strconv.FormatBool(b.Ready))
+	}
+	if strings.Join(backends, ",") != c.Key+":true" {
+		t.Fatalf("backends = %v", backends)
 	}
 }

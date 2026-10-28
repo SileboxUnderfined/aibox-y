@@ -86,10 +86,16 @@ func (r *Resolver) Settings() Settings {
 	if r.opt.Search != nil {
 		s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: tavilyBackend, Title: "Tavily", Ready: r.backendReady(tavilyBackend)})
 	}
+	r.mu.Lock()
+	var capable []Model
 	for _, m := range models {
-		if canSearch(m.Config) {
-			s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: m.Key, Title: m.spoken() + " (" + m.Config.Model + ")", Ready: r.backendReady(m.Key)})
+		if r.canSearch(m.Key) {
+			capable = append(capable, m)
 		}
+	}
+	r.mu.Unlock()
+	for _, m := range capable {
+		s.SearchBackends = append(s.SearchBackends, SearchBackend{Key: m.Key, Title: m.spoken() + " (" + m.Config.Model + ")", Ready: r.backendReady(m.Key)})
 	}
 	return s
 }
@@ -132,8 +138,7 @@ func (r *Resolver) Apply(u Update) error {
 	if u.SearchOrder != nil {
 		var order []string
 		for _, key := range *u.SearchOrder {
-			m, ok := r.opt.Models[key]
-			if key != tavilyBackend && (!ok || !canSearch(m.Config)) {
+			if key != tavilyBackend && !r.canSearch(key) {
 				return errors.New("this model cannot search: " + key)
 			}
 			if !slices.Contains(order, key) {
