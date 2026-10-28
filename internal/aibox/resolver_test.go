@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"aiboxy/internal/bridge"
 	"aiboxy/internal/chats"
 	"aiboxy/internal/providers"
 )
@@ -538,5 +539,43 @@ func TestCustomProviderSearches(t *testing.T) {
 	}
 	if len(web.systems) != 1 || !strings.Contains(web.systems[0], "поисковый помощник") {
 		t.Fatalf("custom API not asked as a searcher: %v", web.systems)
+	}
+}
+
+func TestStopOverAnswerKeepsChat(t *testing.T) {
+	r, llm, store := setup(t)
+	say(t, r, "Алиса, спроси, как работает двигатель")
+	// The title is asked in the background: wait for it, so that it does not
+	// land among the calls counted below.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if list, _ := store.List(); len(list) == 1 && list[0].Name == "Космос" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("chat not titled")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	over := bridge.WithInterrupted(context.Background())
+	for _, stop := range []string{"Алиса, стоп", "хватит", "замолчи"} {
+		res, err := r.Resolve(over, stop)
+		if err != nil || res.Route != "llm" || !res.Silent {
+			t.Fatalf("%q over an answer: %+v %v", stop, res, err)
+		}
+	}
+	calls := len(llm.calls)
+	res, err := r.Resolve(over, "Алиса, а сколько у него цилиндров")
+	if err != nil || res.Route != "llm" || res.Silent || res.Answer != "ответ А сколько у него цилиндров" {
+		t.Fatalf("question over an answer: %+v %v", res, err)
+	}
+	if len(llm.calls) != calls+1 || len(llm.calls[len(llm.calls)-1]) != 3 {
+		t.Fatal("interrupting question lost the chat history")
+	}
+	if _, a := say(t, r, "стоп"); a != "Выхожу из чата." {
+		t.Fatalf("plain stop should still close the chat, got %q", a)
+	}
+	if res, _ := r.Resolve(over, "стоп"); res.Route != "yandex" {
+		t.Fatalf("stop outside a chat belongs to Alice, got %+v", res)
 	}
 }

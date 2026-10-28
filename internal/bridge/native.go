@@ -31,6 +31,9 @@ import (
 type Resolution struct {
 	Route  string
 	Answer string
+	// Silent answers without speech and keeps listening, e.g. after "стоп"
+	// cut a spoken answer short.
+	Silent bool
 }
 type Resolver interface {
 	Resolve(context.Context, string) (Resolution, error)
@@ -73,6 +76,7 @@ type nativeRequest struct {
 	soundRequest                    *sound.Request
 	soundDirective                  *soundDirective
 	soundSealed                     bool
+	silent                          bool
 	expires                         *time.Timer
 }
 type Native struct {
@@ -86,6 +90,9 @@ type Native struct {
 	tts              map[string]*nativeRequest
 	streams          map[uint32]*nativeRequest
 	blocked          map[uint32]*nativeRequest
+	speaking         *nativeRequest // local answer whose speech may still be playing
+	cutShort         *nativeRequest // local answer the device stopped early
+	cutAt            time.Time
 	wg               sync.WaitGroup
 	OnRoute          func(id, route string)
 	GateText         bool
@@ -129,6 +136,9 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		}
 		timestamps := stat.GetTimestamps()
 		reported := func(value string) bool { return value != "" && value != "0" }
+		n.mu.Lock()
+		n.playbackDoneLocked(stat.GetRequestMessageId(), reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
+		n.mu.Unlock()
 		slog.Info("native_playback_status", "request", requestTag(stat.GetRequestMessageId()), "error_class", kind, "playback_reported", reported(timestamps.GetOnSoundPlayerBeginTime()) || reported(timestamps.GetOnPlayerBegin()), "finished_reported", reported(timestamps.GetOnSoundPlayerEndTime()) || reported(timestamps.GetOnPlayerEnd()))
 	}
 	if kind := f.Kind(); kind == "VoiceInput" || kind == "SpeechInput" {
@@ -183,6 +193,12 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 			n.mu.Unlock()
 			cancel()
 			return nil
+		}
+		if stopTTS, cut := n.interruptLocked(); cut {
+			p.ctx = WithInterrupted(p.ctx)
+			if stopTTS != "" {
+				defer func() { _ = n.sendCancel(n.ctx, stopTTS) }()
+			}
 		}
 		if len(n.requests) >= 128 {
 			n.mu.Unlock()
@@ -615,6 +631,7 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 			return
 		}
 		p.local = true
+		p.silent = result.Silent
 		if !p.streaming {
 			p.ttsID = newID()
 			n.tts[p.ttsID] = p
@@ -650,7 +667,11 @@ func (n *Native) reply(p *nativeRequest, text string) error {
 	answer := &response.TAliceResponseProto{Header: &response.TAliceResponseProto_THeader{RequestId: new(requestID), ResponseId: new(newID()), DialogId: new(p.request.GetHeader().GetDialogId()), SequenceNumber: new(p.request.GetHeader().GetSequenceNumber())}, VoiceResponse: &response.TAliceResponseProto_TVoiceResponse{OutputSpeech: &response.TAliceResponseProto_TVoiceResponse_TOutputSpeech{Text: new(text)}, HasVoiceResponse: true}, Response: &response.TAliceResponseProto_TResponse{Cards: []*response.TAliceResponseProto_TResponse_TCard{{Type: "simple_text", Text: new(text), CardId: new(newID())}}}}
 	silentPlayback := n.hasSilentPlayback(p)
 	answer.VoiceResponse.ShouldListen = n.ShouldListen && !silentPlayback
-	if silentPlayback {
+	if p.silent {
+		answer.VoiceResponse.HasVoiceResponse = false
+		answer.VoiceResponse.OutputSpeech.Text = new("")
+		answer.Response.Cards = nil
+	} else if silentPlayback {
 		answer.VoiceResponse.HasVoiceResponse = false
 		answer.VoiceResponse.OutputSpeech.Text = new("")
 	}
@@ -669,9 +690,14 @@ func (n *Native) reply(p *nativeRequest, text string) error {
 		return err
 	}
 	n.captureDelivered(p, text, true, silentPlayback || len(answer.Response.Directives) > 0, true)
-	if silentPlayback {
+	if silentPlayback || p.silent {
 		return nil
 	}
+	n.mu.Lock()
+	if !p.canceled {
+		n.speaking = p
+	}
+	n.mu.Unlock()
 	return n.synthesize(p, text)
 }
 func (n *Native) synthesize(p *nativeRequest, text string) error {

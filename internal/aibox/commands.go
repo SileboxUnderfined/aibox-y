@@ -57,6 +57,9 @@ var patterns = []struct {
 // marks "спроси нейросеть", which never names a model.
 var quickPattern = regexp.MustCompile(`^(?:(?:спроси(?:те)?|задай(?:те)? вопрос)(?: у)?(?P<neuro> (?:нейросет[ьи]|нейронк[уеи]|ии))?|вопрос(?P<neuro2> (?:нейросет[ьи]|нейронк[уеи]|ии)))(?: (.+))?$`)
 
+// stopPhrases cut a spoken answer short; the chat stays open.
+var stopPhrases = regexp.MustCompile(`^(?:стоп|хватит|замолчи|помолчи|тихо|тише|подожди|погоди|достаточно|остановись|перестань|не надо|ладно|понятно|ясно)$`)
+
 var exitPhrases = regexp.MustCompile(`^(?:хватит|стоп|выход|выйти|выйди|пока|закрой чат|закрыть чат|выйди из чата|выйти из чата|заверши чат|завершить чат|конец чата)$`)
 
 // cleanText normalizes recognized speech and drops the wake word.
