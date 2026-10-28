@@ -54,7 +54,7 @@ func New(cfg Config) (Completer, error) {
 		}
 		return &openAI{cfg: cfg, http: httpClient}, nil
 	case "anthropic":
-		return newAnthropic(cfg), nil
+		return newAnthropic(cfg, httpClient), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type %q", cfg.Type)
 	}
