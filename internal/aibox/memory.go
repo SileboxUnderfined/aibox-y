@@ -94,7 +94,7 @@ func (r *Resolver) handleMemory(c command, text string) string {
 		}
 		return "Снова запоминаю важное из разговоров."
 	case cmdRemember:
-		f, err := r.opt.Memory.Add(spokenTail(text, rememberPattern), "voice")
+		f, err := r.opt.Memory.Add(spokenTail(text, c.re), "voice")
 		switch {
 		case errors.Is(err, memory.ErrFull):
 			return "Память заполнена: в ней уже " + strconv.Itoa(memory.MaxFacts) + " фактов. Скажите «забудь, что …» или удалите лишнее в веб-панели."

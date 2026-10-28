@@ -41,6 +41,8 @@ type state struct {
 	MemoryOff      bool     `json:"memory_off,omitempty"`
 	MemoryAutoOff  bool     `json:"memory_auto_off,omitempty"`
 	MemoryExcluded []string `json:"memory_excluded,omitempty"` // models that never see the facts
+	// Commands are phrases changed in the panel; they win over the config.
+	Commands map[string]Phrases `json:"commands,omitempty"`
 }
 
 func loadState(path string) state {

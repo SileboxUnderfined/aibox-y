@@ -32,6 +32,9 @@ type Options struct {
 	KeepAntimat bool
 	// Search runs our web_search tool; nil leaves only providers' own search.
 	Search WebSearcher
+	// Commands are phrases from the config, by command id; the web panel
+	// can override them.
+	Commands map[string]Phrases
 }
 
 type WebSearcher interface {
@@ -55,6 +58,7 @@ type Resolver struct {
 	active *session
 	state  state
 	now    func() time.Time
+	cmds   *commandSet
 }
 
 func New(opt Options) *Resolver {
@@ -71,6 +75,7 @@ func New(opt Options) *Resolver {
 		opt.RequestTimeout = 40 * time.Second
 	}
 	r := &Resolver{opt: opt, now: time.Now, state: loadState(opt.StatePath)}
+	r.cmds = buildCommands(r.phrasesLocked())
 	if opt.Models == nil {
 		opt.Models = map[string]*Model{}
 		r.opt.Models = opt.Models
@@ -134,9 +139,29 @@ func (r *Resolver) CurrentModel() string {
 	return r.state.Model
 }
 
+// phrasesLocked is the config's phrases with the panel's on top.
+func (r *Resolver) phrasesLocked() map[string]Phrases {
+	out := map[string]Phrases{}
+	for id, p := range r.opt.Commands {
+		out[id] = p
+	}
+	for id, p := range r.state.Commands {
+		if _, ok := commandByID(id); ok {
+			out[id] = p
+		}
+	}
+	return out
+}
+
+func (r *Resolver) commands() *commandSet {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cmds
+}
+
 // command parses text, dropping commands that do not apply right now.
 func (r *Resolver) command(text string) command {
-	c := parse(text, r.inChat())
+	c := r.commands().parse(text, r.inChat())
 	switch {
 	case c.kind == cmdModelSwitch && r.find(c.name) == nil:
 		c.kind = cmdNone
@@ -199,7 +224,7 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 	if d.Route != "llm" {
 		return bridge.Resolution{Route: "yandex"}, nil
 	}
-	if bridge.Interrupted(ctx) && r.inChat() && stopPhrases.MatchString(cleanText(text)) {
+	if bridge.Interrupted(ctx) && r.inChat() && r.commands().stops(text) {
 		// "Алиса, стоп" over an answer only silences it and waits for the next question.
 		r.mu.Lock()
 		if r.active != nil {
@@ -253,7 +278,7 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 		r.open(&session{chat: chat})
 		return "Продолжаем чат «" + chat.Name + "». Слушаю.", true
 	case cmdQuick:
-		model, question := r.quick(text)
+		model, question := r.quick(c, text)
 		r.open(&session{chat: &chats.Chat{ID: chats.NewID(), Created: r.now(), Updated: r.now()}, model: model})
 		if question == "" {
 			if model != "" {
@@ -478,9 +503,9 @@ func (r *Resolver) modelFor(key string) Model {
 
 // quick splits a quick question into the model it names (if any) and the
 // question itself, as it was recognized.
-func (r *Resolver) quick(text string) (model, question string) {
+func (r *Resolver) quick(c command, text string) (model, question string) {
 	cleaned := cleanText(text)
-	m := quickPattern.FindStringSubmatchIndex(cleaned)
+	m := c.re.FindStringSubmatchIndex(cleaned)
 	if m == nil {
 		return "", ""
 	}
@@ -490,7 +515,13 @@ func (r *Resolver) quick(text string) (model, question string) {
 	}
 	skip := len(strings.Fields(chats.Normalize(text))) - len(strings.Fields(cleaned)) + len(strings.Fields(cleaned[:restStart]))
 	rest := strings.Fields(cleaned[restStart:])
-	neuro := m[2] >= 0 || m[4] >= 0
+	// Only the built-in pattern has "спроси нейросеть"; the user's phrases never name it.
+	neuro := false
+	for _, g := range []string{"neuro", "neuro2"} {
+		if i := c.re.SubexpIndex(g); i > 0 && m[2*i] >= 0 {
+			neuro = true
+		}
+	}
 	if !neuro {
 		if key, n := r.modelPrefix(rest); key != "" {
 			model, skip = key, skip+n

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
 )
@@ -45,6 +46,18 @@ type Settings struct {
 	SearchOrder    []string        `json:"search_order"`
 	SearchBackends []SearchBackend `json:"search_backends"`
 	Memory         MemoryInfo      `json:"memory"`
+	Commands       []CommandInfo   `json:"commands"`
+}
+
+// CommandInfo is one voice command as the panel shows it.
+type CommandInfo struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Builtin []string `json:"builtin"` // examples of the built-in phrases
+	// Args is "none", "optional" or "required": what may follow the phrase.
+	Args    string   `json:"args"`
+	Add     []string `json:"add"`
+	Replace bool     `json:"replace"`
 }
 
 type SearchBackend struct {
@@ -79,6 +92,8 @@ type Update struct {
 	MemoryEnabled  *bool     `json:"memory_enabled,omitempty"`
 	MemoryAuto     *bool     `json:"memory_auto,omitempty"`
 	MemoryExcluded *[]string `json:"memory_excluded,omitempty"`
+	// Commands maps a command id to its phrases; null goes back to the config.
+	Commands map[string]*Phrases `json:"commands,omitempty"`
 }
 
 func (r *Resolver) Settings() Settings {
@@ -96,6 +111,11 @@ func (r *Resolver) Settings() Settings {
 		}
 		models = append(models, *m)
 		s.Providers = append(s.Providers, ProviderInfo{Key: key, Title: m.spoken(), Type: providerType(m.Config), Model: m.Config.Model, KeyEnv: m.Config.APIKeyEnv, HasKey: os.Getenv(m.Config.APIKeyEnv) != "", BaseURL: m.Config.BaseURL, Aliases: m.Aliases, Custom: r.isCustom(key) >= 0, SearchOnly: m.SearchOnly, SearchMode: mode, NativeSearch: providers.NativeSearch(m.Config) != ""})
+	}
+	phrases := r.phrasesLocked()
+	for _, d := range commandDefs {
+		p := phrases[d.id]
+		s.Commands = append(s.Commands, CommandInfo{ID: d.id, Title: d.title, Builtin: d.example, Args: [...]string{"none", "optional", "required"}[d.args], Add: append([]string{}, p.Add...), Replace: p.Replace})
 	}
 	s.Memory = MemoryInfo{Available: r.opt.Memory != nil, Enabled: r.memoryOnLocked(), Auto: !r.state.MemoryAutoOff, Excluded: append([]string{}, r.state.MemoryExcluded...), Facts: []memory.Fact{}, Max: memory.MaxFacts}
 	r.mu.Unlock()
@@ -178,6 +198,16 @@ func (r *Resolver) Apply(u Update) error {
 	if u.SearchOn != nil {
 		r.state.SearchOff = !*u.SearchOn
 	}
+	for id, p := range u.Commands {
+		if _, ok := commandByID(id); !ok {
+			return errors.New("unknown command: " + id)
+		}
+		for _, a := range p.addList() {
+			if chats.Normalize(a) == "" {
+				return errors.New("пустая фраза: " + a)
+			}
+		}
+	}
 	if u.MemoryExcluded != nil {
 		for _, key := range *u.MemoryExcluded {
 			if _, ok := r.opt.Models[key]; !ok {
@@ -217,7 +247,28 @@ func (r *Resolver) Apply(u Update) error {
 	if u.MemoryExcluded != nil {
 		r.state.MemoryExcluded = append([]string(nil), *u.MemoryExcluded...)
 	}
+	if len(u.Commands) > 0 {
+		r.applyCommandsLocked(u.Commands)
+	}
 	return saveState(r.opt.StatePath, r.state)
+}
+
+func (r *Resolver) applyCommandsLocked(changes map[string]*Phrases) {
+	for id, p := range changes {
+		var clean Phrases
+		if p != nil {
+			clean = Phrases{Add: p.addList(), Replace: p.Replace}
+		}
+		if cfg := r.opt.Commands[id]; p == nil || (clean.Replace == cfg.Replace && slices.Equal(clean.Add, cfg.addList())) {
+			delete(r.state.Commands, id)
+			continue
+		}
+		if r.state.Commands == nil {
+			r.state.Commands = map[string]Phrases{}
+		}
+		r.state.Commands[id] = clean
+	}
+	r.cmds = buildCommands(r.phrasesLocked())
 }
 
 // ListModels asks a provider which models the configured key can use.

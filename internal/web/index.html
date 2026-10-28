@@ -44,6 +44,10 @@ code{font-size:12px}
 .fact:first-child{border-top:0}
 .fact span{flex:1}
 .fact small{color:var(--muted);font-size:12px}
+.cmd{border-top:1px solid var(--line);padding:10px 0}
+.cmd:first-child{border-top:0}
+.cmd b{font-weight:600}
+details summary{cursor:pointer;font-weight:600}
 </style>
 </head>
 <body>
@@ -91,6 +95,14 @@ code{font-size:12px}
 <div class="row"><input id="factNew" placeholder="Например: меня зовут Валерий" maxlength="300"><button type="button" id="factAdd">Добавить</button></div>
 <div class="row"><button type="button" id="factClear">Очистить память</button></div>
 <p class="hint">Голосом: «Алиса, запомни, что …», «забудь, что …», «что ты обо мне знаешь», «забудь всё обо мне», «выключи память». Факты хранятся на колонке в <code>memory.json</code> и уходят только тому провайдеру, который отвечает.</p>
+</section>
+
+<section>
+<details id="cmdBox">
+<summary>Голосовые команды</summary>
+<p class="hint">Свои фразы через запятую добавляются к стандартным. «Только мои» отключает стандартные фразы; если при этом своих нет, команда выключена. Слово «Алиса» задаёт прошивка колонки: в приложении «Дом с Алисой» его можно сменить только на «Яндекс».</p>
+<div id="commands"></div>
+</details>
 </section>
 
 <section>
@@ -211,8 +223,25 @@ function render(s) {
   sb.textContent = s.search_has_key ? "ключ задан" : "нет ключа";
   sb.className = "badge " + (s.search_has_key ? "ok" : "bad");
   renderMemory(s.memory, s.providers);
+  renderCommands(s.commands || []);
   $("#user").value = s.user_prompt;
   $("#base").value = s.base_prompt || s.default_base_prompt;
+}
+
+const argHints = {optional: " Дальше можно сказать название или вопрос.", required: " Дальше нужно сказать, что именно."};
+function renderCommands(list) {
+  const box = $("#commands");
+  box.textContent = "";
+  for (const c of list) {
+    const el = document.createElement("div"); el.className = "cmd";
+    el.innerHTML = `<b></b><p class="hint std"></p><div class="row"><input class="phrases" autocomplete="off"></div><label class="check"><input type="checkbox" class="only"> Только мои фразы</label>`;
+    el.querySelector("b").textContent = c.title;
+    el.querySelector(".std").textContent = "Стандартные: «" + c.builtin.join("», «") + "»." + (argHints[c.args] || "");
+    const input = el.querySelector(".phrases");
+    input.dataset.id = c.id; input.value = c.add.join(", "); input.placeholder = "Свои фразы, например: " + c.builtin[0];
+    el.querySelector(".only").checked = c.replace;
+    box.append(el);
+  }
 }
 
 const sources = {voice: "голосом", model: "модель", panel: "в панели"};
@@ -315,6 +344,11 @@ $("#save").onclick = async () => {
     body.memory_enabled = $("#memOn").checked;
     body.memory_auto = $("#memAuto").checked;
     body.memory_excluded = [...document.querySelectorAll(".memEx:checked")].map(c => c.value);
+  }
+  body.commands = {};
+  for (const el of document.querySelectorAll(".cmd")) {
+    const input = el.querySelector(".phrases");
+    body.commands[input.dataset.id] = {add: input.value.split(",").map(a => a.trim()).filter(Boolean), replace: el.querySelector(".only").checked};
   }
   status("Сохраняю…");
   try { render(await api("/api/settings", {method: "POST", body: JSON.stringify(body)})); status("Сохранено."); }
