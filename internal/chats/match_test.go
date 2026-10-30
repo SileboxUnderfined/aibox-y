@@ -28,6 +28,21 @@ func TestSimilarity(t *testing.T) {
 	}
 }
 
+func TestNormalizeComposesUnicode(t *testing.T) {
+	for _, tc := range [][2]string{
+		{"й", "и\u0306"},
+		{"ё", "е\u0308"},
+		{"Человек-паук", "Человек—паук"},
+	} {
+		if got, want := Normalize(tc[1]), Normalize(tc[0]); got != want {
+			t.Errorf("Normalize(%q) = %q, want %q", tc[1], got, want)
+		}
+	}
+	if got := Normalize("  Ёлка,  друг! "); got != "елка друг" {
+		t.Errorf("Normalize = %q", got)
+	}
+}
+
 func TestStore(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

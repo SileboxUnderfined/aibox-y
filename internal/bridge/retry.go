@@ -31,7 +31,8 @@ func (e *Engine) RecordDelivered(ctx context.Context, question, answer string, f
 
 func (e *Engine) retryQuestion(ctx context.Context, ticket dialogue.Ticket) (Resolution, error) {
 	result := Resolution{Route: "llm"}
-	if e.LLM == nil {
+	answerer := e.answerCompleter()
+	if answerer == nil {
 		return result, errors.New("LLM is not configured")
 	}
 	replay, ok := e.dialogue().Replay(ctx, ticket)
@@ -61,7 +62,7 @@ func (e *Engine) retryQuestion(ctx context.Context, ticket dialogue.Ticket) (Res
 	messages := []llm.Message{{Role: "system", Content: characters.Prompt(base, character, "")}}
 	messages = append(messages, replay.Messages...)
 	messages = append(messages, llm.Message{Role: "user", Content: replay.Question})
-	answer, err := e.LLM.Complete(llm.WithoutHostedTools(ctx), messages, false)
+	answer, err := answerer.Complete(llm.WithoutHostedTools(ctx), messages, false)
 	if !e.dialogue().Current(ctx, ticket) {
 		return result, context.Canceled
 	}

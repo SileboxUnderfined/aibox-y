@@ -16,6 +16,8 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -71,11 +73,14 @@ func DefaultCharacter() Character { return Default() }
 // NormalizeName is the one canonical spelling used for uniqueness and for
 // matching a spoken name. Recognition lowercases text, folds ё to е and turns
 // punctuation such as the hyphen in «Человек-паук» into a space, so a stored
-// name must be folded the same way before it is compared. Keeping the rule in
-// one place means two names that sound identical can never both be stored and
-// a voice request cannot select the wrong one.
+// name must be folded the same way before it is compared. Unicode is composed
+// first, so a decomposed «и» + combining breve compares equal to «й» and a
+// decomposed «е» + diaeresis compares equal to «ё».
 func NormalizeName(name string) string {
-	name = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "ё", "е"), "Ё", "Е"))
+	name = norm.NFC.String(name)
+	name = strings.ToLower(name)
+	name = strings.ReplaceAll(name, "ё", "е")
+	name = norm.NFC.String(name)
 	var b strings.Builder
 	space := false
 	for _, r := range name {
@@ -83,6 +88,12 @@ func NormalizeName(name string) string {
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(r)
 			space = false
+		case unicode.IsMark(r):
+			// Keep marks that NFC cannot compose with the preceding letter;
+			// they are part of the spoken token rather than a separator.
+			if b.Len() > 0 && !space {
+				b.WriteRune(r)
+			}
 		case !space && b.Len() > 0:
 			b.WriteByte(' ')
 			space = true
@@ -120,7 +131,9 @@ type fileData struct {
 // Open loads characters from path. A missing file is an empty list with the
 // default character active. Malformed JSON is moved aside to a .corrupt file
 // and the store starts from the default, so one bad write cannot stop chat
-// settings from loading.
+// settings from loading. If valid JSON contains records that cannot be kept,
+// the original bytes are copied to a .corrupt file before any later save can
+// replace the live file.
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, characters: []Character{}}
 	if path == "" {
@@ -143,7 +156,11 @@ func Open(path string) (*Store, error) {
 		}
 		return s, nil
 	}
-	s.loadLocked(file)
+	if dropped := s.loadLocked(file); dropped {
+		if berr := s.backup(data); berr != nil {
+			return nil, fmt.Errorf("characters contain invalid records and could not be saved aside: %w", berr)
+		}
+	}
 	return s, nil
 }
 
@@ -161,23 +178,26 @@ func decode(data []byte) (fileData, error) {
 	return fileData{}, errors.New("invalid character data")
 }
 
-// loadLocked sanitizes untrusted or partially corrupted data: bad records are
-// dropped, duplicate ids and normalized names keep the first entry, and an
-// active id that no longer exists falls back to the default.
-func (s *Store) loadLocked(file fileData) {
+// loadLocked preserves every valid stored record. Names that become equal only
+// after normalization are kept: they are real user data, and dropping one here
+// would make the next save permanently lose it. Only records that cannot be
+// represented at all (empty id/name, the reserved default id, or a repeated
+// id) are dropped; Open then keeps a .corrupt copy of the source. Duplicate
+// normalized names are resolved explicitly when a voice command selects one.
+func (s *Store) loadLocked(file fileData) (dropped bool) {
 	seenIDs := map[string]bool{DefaultID: true}
-	seenNames := map[string]bool{NormalizeName(DefaultName): true}
 	characters := make([]Character, 0, len(file.Characters))
 	for _, c := range file.Characters {
 		c = cleanCharacter(c)
 		if c.ID == "" || c.Name == "" {
+			dropped = true
 			continue
 		}
-		if c.ID == DefaultID || seenIDs[c.ID] || seenNames[NormalizeName(c.Name)] {
+		if c.ID == DefaultID || seenIDs[c.ID] {
+			dropped = true
 			continue
 		}
 		seenIDs[c.ID] = true
-		seenNames[NormalizeName(c.Name)] = true
 		characters = append(characters, c)
 	}
 	s.characters = characters
@@ -185,25 +205,58 @@ func (s *Store) loadLocked(file fileData) {
 	if s.activeID == DefaultID || !seenIDs[s.activeID] {
 		s.activeID = ""
 	}
+	return dropped
 }
 
 func (s *Store) quarantine() error {
 	if s.path == "" {
 		return nil
 	}
+	target, err := freeBackupPath(s.path + ".corrupt")
+	if err != nil {
+		return err
+	}
+	return os.Rename(s.path, target)
+}
+
+// backup copies the current bytes aside without touching the live file, so a
+// later sanitized save cannot destroy the original damaged records. Identical
+// repeated opens reuse the same backup instead of producing endless copies.
+func (s *Store) backup(data []byte) error {
+	if s.path == "" {
+		return nil
+	}
 	base := s.path + ".corrupt"
-	target := base
-	for i := 2; ; i++ {
-		_, err := os.Stat(target)
+	for i := 1; ; i++ {
+		target := base
+		if i > 1 {
+			target = fmt.Sprintf("%s-%d", base, i)
+		}
+		existing, err := os.ReadFile(target)
 		if errors.Is(err, os.ErrNotExist) {
-			break
+			return os.WriteFile(target, data, 0o600)
 		}
 		if err != nil {
 			return err
 		}
+		if string(existing) == string(data) {
+			return nil
+		}
+	}
+}
+
+func freeBackupPath(base string) (string, error) {
+	target := base
+	for i := 2; ; i++ {
+		_, err := os.Stat(target)
+		if errors.Is(err, os.ErrNotExist) {
+			return target, nil
+		}
+		if err != nil {
+			return "", err
+		}
 		target = fmt.Sprintf("%s-%d", base, i)
 	}
-	return os.Rename(s.path, target)
 }
 
 // Active returns the selected character. The built-in default is returned
@@ -306,8 +359,14 @@ func (s *Store) Update(c Character) (Character, error) {
 	if index < 0 {
 		return Character{}, ErrNotFound
 	}
+	// A legacy file may already contain two speech-equivalent names. Editing
+	// the prompt of one of those records must not fail or drop its sibling;
+	// only a rename that would create a new collision is rejected.
+	sameSpeechName := NormalizeName(s.characters[index].Name) == NormalizeName(name)
 	if err := s.checkNameLocked(name, id); err != nil {
-		return Character{}, err
+		if !(sameSpeechName && errors.Is(err, ErrDuplicateName)) {
+			return Character{}, err
+		}
 	}
 	next := cloneAll(s.characters)
 	next[index] = Character{ID: id, Name: name, Prompt: prompt, Rules: rules}
@@ -397,6 +456,9 @@ func (s *Store) activeIDLocked() string {
 
 func (s *Store) checkNameLocked(name, selfID string) error {
 	normalized := NormalizeName(name)
+	if normalized == "" {
+		return ErrEmptyName
+	}
 	if normalized == NormalizeName(DefaultName) {
 		return ErrDuplicateName
 	}
@@ -458,15 +520,17 @@ func (s *Store) saveLocked(list []Character, active string) error {
 	return nil
 }
 
+// checkUnique protects the on-disk identity invariants. Normalized name
+// duplicates are deliberately not rejected here: a legacy file may contain
+// them and must round-trip without losing either record. New collisions are
+// prevented at the Create/Update boundary by checkNameLocked.
 func checkUnique(list []Character) error {
 	ids := map[string]bool{}
-	names := map[string]bool{}
 	for _, c := range list {
-		if c.ID == "" || c.ID == DefaultID || ids[c.ID] || names[NormalizeName(c.Name)] {
+		if c.ID == "" || c.ID == DefaultID || c.Name == "" || ids[c.ID] {
 			return ErrDuplicateName
 		}
 		ids[c.ID] = true
-		names[NormalizeName(c.Name)] = true
 	}
 	return nil
 }
@@ -511,7 +575,7 @@ func cleanRules(rules []string) []string {
 // is shared by Create, Update and the panel, so every write path has the same
 // bounds and no caller can bypass them by posting directly to the API.
 func validateFields(name, prompt string, rules []string) error {
-	if name == "" {
+	if name == "" || NormalizeName(name) == "" {
 		return ErrEmptyName
 	}
 	if utf8.RuneCountInString(name) > MaxNameRunes {

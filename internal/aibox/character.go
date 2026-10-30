@@ -129,8 +129,9 @@ func (r *Resolver) characterAtStart() characters.Character {
 }
 
 // handleCharacter implements «персонаж [имя]». With no name it reports the
-// current choice; «по умолчанию» clears it; an unknown name changes nothing.
-// The command is answered locally and never reaches the LLM or chat history.
+// current choice; «по умолчанию» clears it; an unknown name changes nothing;
+// an ambiguous normalized name is reported without switching. The command is
+// answered locally and never reaches the LLM or chat history.
 func (r *Resolver) handleCharacter(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -140,21 +141,37 @@ func (r *Resolver) handleCharacter(name string) string {
 		}
 		return "Сейчас персонаж «" + active.Name + "». " + r.characterListText()
 	}
-	if characters.NormalizeName(name) == characters.NormalizeName(characters.DefaultName) {
+	normalized := characters.NormalizeName(name)
+	if normalized == "" {
+		return "Не поняла имя персонажа: в нём нет произносимых звуков. Переключение не выполнено."
+	}
+	if normalized == characters.NormalizeName(characters.DefaultName) {
 		if err := r.opt.Characters.SetActive(characters.DefaultID); err != nil {
 			slog.Warn("character_select_failed")
 			return "Не получилось вернуть персонажа по умолчанию."
 		}
 		return "Вернула персонажа «" + characters.DefaultName + "». Отвечаю как обычно."
 	}
+	matches := make([]characters.Character, 0, 1)
 	for _, c := range r.opt.Characters.List() {
-		if characters.NormalizeName(c.Name) == characters.NormalizeName(name) {
-			if err := r.opt.Characters.SetActive(c.ID); err != nil {
-				slog.Warn("character_select_failed")
-				return "Не получилось выбрать персонажа «" + c.Name + "»."
-			}
-			return "Теперь персонаж «" + c.Name + "». Модель не менялась."
+		if characters.NormalizeName(c.Name) == normalized {
+			matches = append(matches, c)
 		}
+	}
+	if len(matches) == 1 {
+		c := matches[0]
+		if err := r.opt.Characters.SetActive(c.ID); err != nil {
+			slog.Warn("character_select_failed")
+			return "Не получилось выбрать персонажа «" + c.Name + "»."
+		}
+		return "Теперь персонаж «" + c.Name + "». Модель не менялась."
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, c := range matches {
+			names = append(names, c.Name)
+		}
+		return "Неоднозначное имя: «" + name + "» подходит к нескольким персонажам (" + strings.Join(names, ", ") + "). Уточните имя; переключение не выполнено."
 	}
 	return "Не знаю персонажа «" + name + "». " + r.characterListText()
 }

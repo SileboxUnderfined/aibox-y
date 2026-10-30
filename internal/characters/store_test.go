@@ -280,7 +280,7 @@ func TestSemanticallyBrokenFileIsSanitized(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := s.List()
-	if len(list) != 2 || list[0].ID != "one" || list[0].Name != "Alice Smith" || list[1].ID != "three" {
+	if len(list) != 4 || list[0].ID != "one" || list[0].Name != "Alice Smith" || list[1].ID != "two" || list[2].ID != "default-name" || list[3].ID != "three" {
 		t.Fatalf("sanitized list = %+v", list)
 	}
 	if list[0].Prompt != "p" || len(list[0].Rules) != 1 || list[0].Rules[0] != "r" {
@@ -289,12 +289,133 @@ func TestSemanticallyBrokenFileIsSanitized(t *testing.T) {
 	if s.ActiveID() != DefaultID {
 		t.Fatalf("invalid active id = %q", s.ActiveID())
 	}
+	// Dropped records are copied aside before a later save can replace the
+	// live file, so the original data is never overwritten.
+	if saved, err := os.ReadFile(path + ".corrupt"); err != nil || string(saved) != data {
+		t.Fatalf("invalid records were not preserved: %v", err)
+	}
 	if err := s.SetActive("one"); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := Open(path)
 	if err != nil || reopened.ActiveID() != "one" {
 		t.Fatalf("sanitized store after save/reopen = %q %v", reopened.ActiveID(), err)
+	}
+	if got := reopened.List(); len(got) != 4 || got[1].ID != "two" || got[2].Name != "по умолчанию" {
+		t.Fatalf("preserved records after save/reopen = %+v", got)
+	}
+}
+
+func TestLegacyNormalizedNameCollisionsSurviveLoadAndSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "characters.json")
+	data := `{
+  "version": 1,
+  "active": "two",
+  "characters": [
+    {"id": "one", "name": "Артём", "prompt": "p1"},
+    {"id": "two", "name": "Артем", "prompt": "p2"},
+    {"id": "three", "name": "По-умолчанию", "prompt": "p3"},
+    {"id": "four", "name": "Человек-паук", "prompt": "p4"},
+    {"id": "five", "name": "человек паук", "prompt": "p5"}
+  ]
+}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := s.List()
+	if len(list) != 5 || s.ActiveID() != "two" {
+		t.Fatalf("legacy collisions were not all loaded: active=%q list=%+v", s.ActiveID(), list)
+	}
+	for i, want := range []struct{ id, name string }{{"one", "Артём"}, {"two", "Артем"}, {"three", "По-умолчанию"}, {"four", "Человек-паук"}, {"five", "человек паук"}} {
+		if list[i].ID != want.id || list[i].Name != want.name {
+			t.Fatalf("legacy record %d = %+v, want %+v", i, list[i], want)
+		}
+	}
+	if _, err := os.Stat(path + ".corrupt"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("valid legacy collisions were treated as corruption: %v", err)
+	}
+	// Editing one legacy record while keeping its ambiguous speech name is a
+	// data-preserving update; renaming a third record into the collision is a
+	// new collision and stays rejected.
+	if updated, err := s.Update(Character{ID: "one", Name: "Артём", Prompt: "p1-edited"}); err != nil || updated.Prompt != "p1-edited" {
+		t.Fatalf("updating a legacy collision = %+v %v", updated, err)
+	}
+	if _, err := s.Update(Character{ID: "four", Name: "артем", Prompt: "p4"}); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("new collision on update = %v, want ErrDuplicateName", err)
+	}
+	list = s.List()
+	if len(list) != 5 || list[0].Prompt != "p1-edited" || list[1].Prompt != "p2" {
+		t.Fatalf("legacy update changed the wrong records: %+v", list)
+	}
+	// A later save must keep every old record and id, not only the ones the
+	// current normalization considers unique.
+	added := mustCreate(t, s, Character{Name: "Новый", Prompt: "new"})
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reopened.List()
+	if len(got) != 6 || reopened.ActiveID() != "two" {
+		t.Fatalf("save lost legacy records: active=%q list=%+v", reopened.ActiveID(), got)
+	}
+	for i := 0; i < 5; i++ {
+		if got[i].ID != list[i].ID || got[i].Name != list[i].Name || got[i].Prompt != list[i].Prompt {
+			t.Fatalf("record %d changed across save: before=%+v after=%+v", i, list[i], got[i])
+		}
+	}
+	if got[5].ID != added.ID || got[5].Name != "Новый" {
+		t.Fatalf("new record missing after save: %+v", got[5])
+	}
+}
+
+func TestNormalizationRejectsUnspeakableNames(t *testing.T) {
+	for _, name := range []string{"   ", "---", "!!!", "· · ·", "\u0301"} {
+		if got := NormalizeName(name); got != "" {
+			t.Errorf("NormalizeName(%q) = %q, want empty", name, got)
+		}
+	}
+	s, _ := openStore(t)
+	for _, name := range []string{"---", "!!!", "· · ·", "\u0301"} {
+		if _, err := s.Create(Character{Name: name}); !errors.Is(err, ErrEmptyName) {
+			t.Errorf("Create(%q) error = %v, want ErrEmptyName", name, err)
+		}
+	}
+	first := mustCreate(t, s, Character{Name: "Первый"})
+	if _, err := s.Update(Character{ID: first.ID, Name: "..."}); !errors.Is(err, ErrEmptyName) {
+		t.Errorf("Update to an unspeakable name error = %v, want ErrEmptyName", err)
+	}
+	if list := s.List(); len(list) != 1 || list[0].Name != "Первый" {
+		t.Fatalf("unspeakable names changed the list: %+v", list)
+	}
+}
+
+func TestNormalizedNameComposesUnicodeDecomposedForms(t *testing.T) {
+	pairs := [][2]string{
+		{"й", "и\u0306"},
+		{"Й", "И\u0306"},
+		{"ё", "е\u0308"},
+		{"Ёлка", "Е\u0308лка"},
+		{"Человек-паук", "Человек—паук"},
+	}
+	for _, pair := range pairs {
+		if got, want := NormalizeName(pair[1]), NormalizeName(pair[0]); got != want {
+			t.Errorf("NormalizeName(%q) = %q, want %q (from %q)", pair[1], got, want, pair[0])
+		}
+	}
+	s, _ := openStore(t)
+	mustCreate(t, s, Character{Name: "йод"})
+	for _, name := range []string{"и\u0306од", "ЙОД"} {
+		if _, err := s.Create(Character{Name: name}); !errors.Is(err, ErrDuplicateName) {
+			t.Errorf("Create(%q) error = %v, want ErrDuplicateName", name, err)
+		}
+	}
+	mustCreate(t, s, Character{Name: "ёж"})
+	if _, err := s.Create(Character{Name: "е\u0308ж"}); !errors.Is(err, ErrDuplicateName) {
+		t.Errorf("decomposed ё duplicate was accepted")
 	}
 }
 

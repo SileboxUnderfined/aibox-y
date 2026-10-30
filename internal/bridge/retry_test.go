@@ -35,6 +35,28 @@ func TestRetryUsesCharacterSnapshotAndReplaysQuestion(t *testing.T) {
 	}
 }
 
+func TestRetryUsesAssistantWhenLLMIsNil(t *testing.T) {
+	called := 0
+	e := &Engine{
+		Assistant: completionFunc(func(_ context.Context, m []llm.Message, structured bool) (string, error) {
+			called++
+			if structured {
+				t.Fatal("retry asked the assistant in structured mode")
+			}
+			if len(m) < 2 || m[1].Role != "user" || m[1].Content != "кто ты" {
+				t.Fatalf("retry messages = %+v", m)
+			}
+			return "Ответ ассистента", nil
+		}),
+	}
+	ctx := t.Context()
+	e.RecordDelivered(ctx, "кто ты", "Я Шерлок.", true, false)
+	res, err := e.Resolve(ctx, "используй нейросеть")
+	if err != nil || res.Route != "llm" || res.Answer != "Ответ ассистента" || called != 1 {
+		t.Fatalf("assistant-only retry = %+v, err = %v, calls = %d", res, err, called)
+	}
+}
+
 func TestRetryWithoutLLMReportsConfigurationError(t *testing.T) {
 	e := &Engine{}
 	ctx := t.Context()

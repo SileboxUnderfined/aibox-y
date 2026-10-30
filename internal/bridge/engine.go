@@ -137,17 +137,21 @@ func (e *Engine) ResolveDecision(ctx context.Context, text string, decision Rout
 		return Resolution{Route: "yandex"}, nil
 	}
 }
+func (e *Engine) answerCompleter() Completer {
+	if e.Assistant != nil {
+		return e.Assistant
+	}
+	return e.LLM
+}
+
 func (e *Engine) Fallback(ctx context.Context, text string) (Resolution, error) {
 	if strings.Contains(strings.ToLower(text), "сайт") || webaddress.MusicRequest(text) {
 		text = webaddress.Normalize(text)
 	}
 	r := Resolution{Route: "llm"}
-	if e.LLM == nil && e.Assistant == nil {
+	answerer := e.answerCompleter()
+	if answerer == nil {
 		return r, errors.New("LLM is not configured")
-	}
-	answerer := e.LLM
-	if e.Assistant != nil {
-		answerer = e.Assistant
 	}
 	ctx, snapshot, ticket := e.dialogue().Start(ctx)
 	if !e.dialogue().Current(ctx, ticket) {

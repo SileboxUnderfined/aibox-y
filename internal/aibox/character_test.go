@@ -2,6 +2,7 @@ package aibox
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,7 +25,11 @@ type characterFixture struct {
 
 func setupCharacters(t *testing.T) characterFixture {
 	t.Helper()
-	dir := t.TempDir()
+	return setupCharactersAt(t, t.TempDir())
+}
+
+func setupCharactersAt(t *testing.T, dir string) characterFixture {
+	t.Helper()
 	chatStore, err := chats.Open(filepath.Join(dir, "chats"))
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +122,48 @@ func TestCharacterVoiceNameUsesSpeechNormalization(t *testing.T) {
 	}
 	if _, err := f.chars.Create(characters.Character{Name: "человек паук"}); err == nil {
 		t.Fatal("a speech-equivalent duplicate name was accepted")
+	}
+	iod := mustCharacter(t, f.chars, characters.Character{Name: "Йод", Prompt: "Ты йод."})
+	if _, a := say(t, f.resolver, "персонаж и\u0306од"); f.chars.ActiveID() != iod.ID {
+		t.Fatalf("decomposed name not selected: answer=%q active=%q", a, f.chars.ActiveID())
+	}
+}
+
+func TestCharacterVoiceAmbiguousNameIsErrorWithoutSwitch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "characters.json")
+	data := `{"version":1,"active":"one","characters":[
+		{"id":"one","name":"Артём","prompt":"p1"},
+		{"id":"two","name":"Артем","prompt":"p2"},
+		{"id":"three","name":"Шерлок","prompt":"p3"}
+	]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := setupCharactersAt(t, dir)
+	if f.chars.ActiveID() != "one" || len(f.chars.List()) != 3 {
+		t.Fatalf("legacy fixture active=%q list=%+v", f.chars.ActiveID(), f.chars.List())
+	}
+
+	_, answer := say(t, f.resolver, "персонаж артем")
+	if f.chars.ActiveID() != "one" {
+		t.Fatalf("ambiguous name switched to %q", f.chars.ActiveID())
+	}
+	for _, want := range []string{"Неоднознач", "нескольким", "переключение не выполнено"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("ambiguous answer %q does not contain %q", answer, want)
+		}
+	}
+
+	// A later unambiguous command still works, and an unpronounceable name is
+	// rejected locally without changing the current selection.
+	if _, a := say(t, f.resolver, "персонаж шерлок"); f.chars.ActiveID() != "three" {
+		t.Fatalf("unambiguous name not selected: answer=%q active=%q", a, f.chars.ActiveID())
+	}
+	// The command parser drops punctuation before this local handler, so call
+	// it directly to cover a name whose speech normalization is empty.
+	if a := f.resolver.handleCharacter("---"); f.chars.ActiveID() != "three" || !strings.Contains(a, "Не поняла имя") {
+		t.Fatalf("unspeakable name changed selection: answer=%q active=%q", a, f.chars.ActiveID())
 	}
 }
 
