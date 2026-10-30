@@ -97,5 +97,5 @@ else
  say "Алиса пока ходит в Яндекс напрямую. Переключить: запусти установщик с --chat"
 fi
 grep -q '"mode": *"chat"' "$state/config.json" || say "чаты выключены (режим observe); включить: запусти установщик с --chat"
-[ -f "$state/web.password" ] && say "веб-панель: http://$ip:8100, пароль: $(cat "$state/web.password")"
+say "веб-панель: http://$ip:8100"
 exit 0

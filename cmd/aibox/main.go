@@ -199,12 +199,7 @@ func main() {
 	}
 	if resolver != nil && cfg.Web.Enabled {
 		dir := filepath.Dir(*path)
-		password, err := web.LoadPassword(filepath.Join(dir, "web.password"))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "web password:", err)
-			os.Exit(1)
-		}
-		panel := &web.Server{Backend: resolver, SecretsPath: filepath.Join(dir, "secrets.env"), Password: password}
+		panel := &web.Server{Backend: resolver, SecretsPath: filepath.Join(dir, "secrets.env")}
 		go func() {
 			srv := &http.Server{Addr: cfg.Web.Listen, Handler: panel.Handler(), ReadHeaderTimeout: 10 * time.Second}
 			ln, err := listenRetry(cfg.Web.Listen)
