@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"aiboxy/internal/dialogue"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"aiboxy/internal/characters"
+	"aiboxy/internal/dialogue"
 	"aiboxy/internal/llm"
 	"aiboxy/internal/playback"
 	"aiboxy/internal/webaddress"
@@ -30,12 +31,14 @@ type MusicStarter interface {
 	StartMusic(context.Context, string) (string, error)
 }
 type Engine struct {
-	LLM          Completer
-	Assistant    Completer
-	Home         HomeHandler
-	Playback     PlaybackController
-	Music        MusicStarter
-	Dialogue     *dialogue.Store
+	LLM       Completer
+	Assistant Completer
+	Home      HomeHandler
+	Playback  PlaybackController
+	Music     MusicStarter
+	Dialogue  *dialogue.Store
+	// Characters supplies the global persona for answers; nil keeps the old prompt.
+	Characters   CharacterSource
 	dialogueOnce sync.Once
 	routing      atomic.Pointer[RoutingPolicy]
 }
@@ -59,9 +62,15 @@ func (e *Engine) Prepare(ctx context.Context) context.Context {
 }
 
 func (e *Engine) Resolve(ctx context.Context, text string) (Resolution, error) {
+	// The snapshot belongs to the whole request, before routing/classification.
+	ctx = snapshotCharacter(ctx, e.Characters)
 	return e.ResolveDecision(ctx, text, e.Decide(ctx, text))
 }
 func (e *Engine) ResolveDecision(ctx context.Context, text string, decision RouteDecision) (Resolution, error) {
+	if _, ok := characterSnapshot(ctx); !ok {
+		// Direct callers get the same one-snapshot guarantee as Resolve.
+		ctx = snapshotCharacter(ctx, e.Characters)
+	}
 	route := decision.Route
 	if decision.prepared {
 		ctx = e.dialogue().Use(ctx, decision.ticket)
@@ -144,7 +153,12 @@ func (e *Engine) Fallback(ctx context.Context, text string) (Resolution, error) 
 	if !e.dialogue().Current(ctx, ticket) {
 		return r, context.Canceled
 	}
-	messages := []llm.Message{{Role: "system", Content: "Ты голосовой помощник пользователя. Отвечай по-русски, кратко и по существу, обычно до трёх предложений. Ответ будет прочитан вслух: без Markdown и служебных рассуждений. Выполняй внешние действия только доступными инструментами по явному запросу пользователя. Не заявляй о выполнении действий без успешного результата инструмента; если инструмента нет, прямо скажи об этом. Для Home Assistant есть отдельный обработчик умного дома."}}
+	// General technical rules first, then the request's character snapshot.
+	// The dialogue history itself is never edited to hold either prompt.
+	base := "Ты голосовой помощник пользователя. Отвечай по-русски, кратко и по существу, обычно до трёх предложений. Ответ будет прочитан вслух: без Markdown и служебных рассуждений. Выполняй внешние действия только доступными инструментами по явному запросу пользователя. Не заявляй о выполнении действий без успешного результата инструмента; если инструмента нет, прямо скажи об этом. Для Home Assistant есть отдельный обработчик умного дома."
+	character, _ := characterSnapshot(ctx)
+	system := characters.Prompt(base, character, "")
+	messages := []llm.Message{{Role: "system", Content: system}}
 	messages = append(messages, snapshot.Messages...)
 	messages = append(messages, llm.Message{Role: "user", Content: text})
 	private := snapshot.PrivateHistory

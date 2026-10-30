@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aiboxy/internal/bridge"
+	"aiboxy/internal/characters"
 	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
@@ -23,7 +24,8 @@ type Options struct {
 	DefaultModel   string
 	StatePath      string // where voice-changed settings are kept
 	Store          *chats.Store
-	Memory         *memory.Store // facts every chat sees; nil turns the memory off
+	Characters     *characters.Store // global persona; nil keeps the old prompt
+	Memory         *memory.Store     // facts every chat sees; nil turns the memory off
 	SystemPrompt   string
 	Idle           time.Duration
 	MaxHistory     int
@@ -165,6 +167,9 @@ func (r *Resolver) command(text string) command {
 	switch {
 	case c.kind == cmdModelSwitch && r.find(c.name) == nil:
 		c.kind = cmdNone
+	case c.kind == cmdCharacter && r.opt.Characters == nil:
+		// Without a character store the phrase belongs to Alice as before.
+		c.kind = cmdNone
 	case c.kind.isMemory() && !r.memoryOn(), c.kind.isMemorySwitch() && r.opt.Memory == nil:
 		// With the memory off, "запомни …" is Alice's again.
 		c.kind = cmdNone
@@ -224,6 +229,9 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 	if d.Route != "llm" {
 		return bridge.Resolution{Route: "yandex"}, nil
 	}
+	// Snapshot the global persona at the start of this request. Every answer
+	// path below reuses this value; a later switch only affects later requests.
+	character := r.characterAtStart()
 	if bridge.Interrupted(ctx) && r.inChat() && r.commands().stops(text) {
 		// "Алиса, стоп" over an answer only silences it and waits for the next question.
 		r.mu.Lock()
@@ -234,7 +242,7 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 		slog.Info("chat_answer_stopped")
 		return bridge.Resolution{Route: "llm", Silent: true}, nil
 	}
-	answer, ok := r.handle(ctx, text)
+	answer, ok := r.handle(ctx, text, character)
 	if !ok {
 		// Any model failure hands the request to Alice as if AIBox were not there.
 		slog.Info("llm_fallback_to_yandex")
@@ -245,9 +253,13 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 
 // handle answers a chat request; false means the model failed and Alice
 // should answer instead.
-func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
+func (r *Resolver) handle(ctx context.Context, text string, character characters.Character) (string, bool) {
 	c := r.command(text)
 	slog.Info("chat_command", "kind", int(c.kind))
+	if c.kind == cmdCharacter {
+		r.touch()
+		return r.handleCharacter(c.name), true
+	}
 	if c.kind.isMemory() || c.kind.isMemorySwitch() {
 		r.touch()
 		return r.handleMemory(c, text), true
@@ -286,7 +298,7 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 			}
 			return "Новый чат. Слушаю.", true
 		}
-		answer, ok := r.askQuestion(ctx, question)
+		answer, ok := r.askQuestion(ctx, question, character)
 		if !ok {
 			r.mu.Lock()
 			r.active = nil // nothing was asked yet, so nothing to keep open
@@ -365,7 +377,7 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 		}
 		return "Сейчас системный промпт: " + custom + ".", true
 	}
-	return r.ask(ctx, text)
+	return r.ask(ctx, text, character)
 }
 
 // touch keeps an open chat from closing while commands are spoken in it.
@@ -399,11 +411,11 @@ func (r *Resolver) listText() string {
 	return "Ваши чаты: " + strings.Join(names, ", ") + "."
 }
 
-func (r *Resolver) ask(ctx context.Context, text string) (string, bool) {
-	return r.askQuestion(ctx, stripWake(text))
+func (r *Resolver) ask(ctx context.Context, text string, character characters.Character) (string, bool) {
+	return r.askQuestion(ctx, stripWake(text), character)
 }
 
-func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bool) {
+func (r *Resolver) askQuestion(ctx context.Context, question string, character characters.Character) (string, bool) {
 	r.mu.Lock()
 	s := r.active
 	r.mu.Unlock()
@@ -418,16 +430,21 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
 	model := r.modelFor(s.model)
-	system := r.systemPrompt()
 	search := r.searchFor(model)
 	if search.Mode != "" {
 		ctx = providers.WithSearch(ctx, search)
-		system += "\n\n" + searchPrompt(r.now())
 	}
 	block, autoMemory := r.memoryPrompt(model.Key, s.temporary)
-	if block != "" {
-		system += "\n\n" + block
+	// One fresh prompt per request, in the documented order: general prompt,
+	// character role and rules, then request context (search, memory).
+	var context []string
+	if search.Mode != "" {
+		context = append(context, searchPrompt(r.now()))
 	}
+	if block != "" {
+		context = append(context, block)
+	}
+	system := characters.Prompt(r.systemPrompt(), character, strings.Join(context, "\n\n"))
 	started := r.now()
 	answer, err := model.Completer.Complete(ctx, system, messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer), "search", search.Mode)

@@ -26,7 +26,8 @@ const (
 	cmdSetPrompt
 	cmdResetPrompt
 	cmdShowPrompt
-	cmdQuick // "спроси [модель|нейросеть] X": a new saved chat that starts with question X
+	cmdCharacter // "персонаж [имя]": global persona for every chat
+	cmdQuick     // "спроси [модель|нейросеть] X": a new saved chat that starts with question X
 	cmdSearchOn
 	cmdSearchOff
 	cmdRemember
@@ -95,6 +96,7 @@ var commandDefs = []commandDef{
 	{"model_switch", cmdModelSwitch, "Переключиться на модель", argRequired, regexp.MustCompile(`^(?:переключись на|переключи на|переключиться на|используй|давай) (.+)$`), []string{"переключись на", "используй"}},
 	{"reset_prompt", cmdResetPrompt, "Сбросить промпт", argNone, regexp.MustCompile(`^(?:сбрось|сбросить|удали|убери|очисти) (?:системный промпт|промпт|роль)$`), []string{"сбрось промпт", "убери роль"}},
 	{"show_prompt", cmdShowPrompt, "Какой промпт", argNone, regexp.MustCompile(`^(?:какой (?:сейчас )?(?:системный )?промпт|какая (?:у тебя )?роль)$`), []string{"какой промпт", "какая у тебя роль"}},
+	{"character", cmdCharacter, "Персонаж", argOptional, characterPattern, []string{"персонаж"}},
 	{"search_on", cmdSearchOn, "Включить интернет", argNone, regexp.MustCompile(`^(?:включи|включить|разреши|верни) (?:нейросети )?(?:интернет|поиск в интернете)(?: (?:для )?нейросети)?$`), []string{"включи интернет"}},
 	{"search_off", cmdSearchOff, "Выключить интернет", argNone, regexp.MustCompile(`^(?:выключи|выключить|отключи|отключить|запрети|убери) (?:нейросети )?(?:интернет|поиск в интернете)(?: (?:для )?нейросети)?$`), []string{"выключи интернет"}},
 	{"set_prompt", cmdSetPrompt, "Задать промпт", argRequired, regexp.MustCompile(`^(?:(?:установи |поставь |новый |смени )?системный промпт|(?:установи |новая |смени )роль|твоя роль) (?:на |это )?(.+)$`), []string{"системный промпт", "твоя роль"}},
@@ -218,6 +220,10 @@ func phraseRegexp(phrases []string, args argMode) *regexp.Regexp {
 }
 
 var defaultCommands = buildCommands(nil)
+
+// characterPattern is deliberately exact: only «персонаж» with an optional
+// name is the built-in command, and the name is matched with NormalizeName.
+var characterPattern = regexp.MustCompile(`^персонаж(?: (.+))?$`)
 
 // quickPattern starts a quick question, in normalized text. The neuro group
 // marks "спроси нейросеть", which never names a model.

@@ -23,6 +23,7 @@ import (
 
 	"aiboxy/internal/aibox"
 	"aiboxy/internal/bridge"
+	"aiboxy/internal/characters"
 	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
@@ -134,6 +135,11 @@ func main() {
 			os.Exit(1)
 		}
 		provider := models[cfg.Provider].Completer
+		characterStore, err := characters.Open(filepath.Join(filepath.Dir(*path), "characters.json"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "characters:", err)
+			os.Exit(1)
+		}
 		if *ask != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
@@ -142,7 +148,8 @@ func main() {
 			} else if providers.NativeSearch(models[cfg.Provider].Config) != "" {
 				ctx = providers.WithSearch(ctx, providers.Search{Mode: providers.SearchNative})
 			}
-			answer, err := provider.Complete(ctx, aibox.DefaultSystemPrompt, []providers.Message{{Role: "user", Content: *ask}})
+			system := characters.Prompt(aibox.DefaultSystemPrompt, characterStore.Active(), "")
+			answer, err := provider.Complete(ctx, system, []providers.Message{{Role: "user", Content: *ask}})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
@@ -165,6 +172,7 @@ func main() {
 			DefaultModel:   cfg.Provider,
 			StatePath:      filepath.Join(filepath.Dir(*path), "state.json"),
 			Store:          store,
+			Characters:     characterStore,
 			Memory:         facts,
 			SystemPrompt:   cfg.SystemPrompt,
 			Idle:           time.Duration(cfg.IdleMinutes) * time.Minute,
