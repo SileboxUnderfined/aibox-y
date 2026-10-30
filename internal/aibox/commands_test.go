@@ -68,8 +68,8 @@ func TestConfigQuickPhraseNamesModel(t *testing.T) {
 	r := setupPhrases(t, map[string]Phrases{"quick": {Add: []string{"узнай у"}}})
 	claude := &fakeLLM{name: "claude"}
 	r.opt.Models["claude"] = &Model{Key: "claude", Title: "Claude", Aliases: []string{"клод"}, Completer: claude}
-	if _, a := say(t, r, "узнай у клода, что такое квазар"); a != "ответ Что такое квазар" || len(claude.calls) == 0 {
-		t.Fatalf("answer = %q, claude calls = %d", a, len(claude.calls))
+	if _, a := say(t, r, "узнай у клода, что такое квазар"); a != "ответ Что такое квазар" || claude.callCount() == 0 {
+		t.Fatalf("answer = %q, claude calls = %d", a, claude.callCount())
 	}
 	time.Sleep(50 * time.Millisecond)
 }

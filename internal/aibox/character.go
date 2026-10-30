@@ -54,7 +54,7 @@ func (r *Resolver) Characters() (CharactersInfo, error) {
 	if r.opt.Characters == nil {
 		return CharactersInfo{}, ErrCharactersUnavailable
 	}
-	active := r.opt.Characters.ActiveID()
+	list, active := r.opt.Characters.Snapshot()
 	info := CharactersInfo{
 		Characters: []CharacterInfo{},
 		Active:     active,
@@ -66,7 +66,7 @@ func (r *Resolver) Characters() (CharactersInfo, error) {
 			Rule:   characters.MaxRuleRunes,
 		},
 	}
-	for _, c := range r.opt.Characters.List() {
+	for _, c := range list {
 		info.Characters = append(info.Characters, characterInfo(c, active))
 	}
 	return info, nil

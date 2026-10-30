@@ -120,6 +120,57 @@ func TestNameUniquenessNormalizesCaseAndSpaces(t *testing.T) {
 	}
 }
 
+func TestSpeechNameNormalizationAndUniqueness(t *testing.T) {
+	cases := map[string]string{
+		"Артём":          "артем",
+		"  АРТЕМ  ":      "артем",
+		"Человек-паук":   "человек паук",
+		"ЧЕЛОВЕК — паук": "человек паук",
+		"По-умолчанию":   "по умолчанию",
+		"Ёлка, друг!":    "елка друг",
+	}
+	for name, want := range cases {
+		if got := NormalizeName(name); got != want {
+			t.Errorf("NormalizeName(%q) = %q, want %q", name, got, want)
+		}
+	}
+
+	s, _ := openStore(t)
+	mustCreate(t, s, Character{Name: "Артём"})
+	for _, name := range []string{"Артем", "АРТЁМ", "артем!", "  Артём  "} {
+		if _, err := s.Create(Character{Name: name}); !errors.Is(err, ErrDuplicateName) {
+			t.Errorf("Create(%q) error = %v, want ErrDuplicateName", name, err)
+		}
+	}
+	mustCreate(t, s, Character{Name: "Человек-паук"})
+	for _, name := range []string{"человек паук", "ЧЕЛОВЕК—ПАУК", "Человек - паук"} {
+		if _, err := s.Create(Character{Name: name}); !errors.Is(err, ErrDuplicateName) {
+			t.Errorf("Create(%q) error = %v, want ErrDuplicateName", name, err)
+		}
+	}
+	for _, name := range []string{"По умолчанию", "по-умолчанию", "ПО  УМОЛЧАНИЮ"} {
+		if _, err := s.Create(Character{Name: name}); !errors.Is(err, ErrDuplicateName) {
+			t.Errorf("reserved Create(%q) error = %v, want ErrDuplicateName", name, err)
+		}
+	}
+}
+
+func TestSnapshotReturnsActiveAndListFromOneRead(t *testing.T) {
+	s, _ := openStore(t)
+	first := mustCreate(t, s, Character{Name: "Первый"})
+	second := mustCreate(t, s, Character{Name: "Второй"})
+	if list, active := s.Snapshot(); len(list) != 2 || active != DefaultID {
+		t.Fatalf("initial snapshot = %+v %q", list, active)
+	}
+	if err := s.SetActive(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, active := s.Snapshot()
+	if len(list) != 2 || list[0].ID != first.ID || list[1].ID != second.ID || active != second.ID {
+		t.Fatalf("selected snapshot = %+v %q", list, active)
+	}
+}
+
 func TestDeleteActiveFallsBackToDefault(t *testing.T) {
 	s, path := openStore(t)
 	first := mustCreate(t, s, Character{Name: "Первый"})

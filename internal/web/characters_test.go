@@ -243,6 +243,41 @@ func TestCharactersAPILifecycleAndPersistence(t *testing.T) {
 	}
 }
 
+func TestLegacyBareArrayCharacterIDIsEditableAndDeletable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "characters.json")
+	if err := os.WriteFile(path, []byte(`[{"id":"one","name":"Старый","prompt":"p"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := characters.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := aibox.New(aibox.Options{Characters: store})
+	h := (&Server{Backend: r, SecretsPath: filepath.Join(dir, "secrets.env")}).Handler()
+
+	rec := do(h, "PUT", "/api/characters/one", `{"name":"Новый","prompt":"q"}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT legacy id: %d %s", rec.Code, rec.Body)
+	}
+	info := decodeCharacters(t, rec.Body.String())
+	if len(info.Characters) != 1 || info.Characters[0].ID != "one" || info.Characters[0].Name != "Новый" || info.Characters[0].Prompt != "q" {
+		t.Fatalf("updated legacy character = %+v", info)
+	}
+
+	rec = do(h, "DELETE", "/api/characters/one", "", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE legacy id: %d %s", rec.Code, rec.Body)
+	}
+	if list := store.List(); len(list) != 0 {
+		t.Fatalf("store still has characters: %+v", list)
+	}
+	reopened, err := characters.Open(path)
+	if err != nil || len(reopened.List()) != 0 {
+		t.Fatalf("deleted legacy character came back: %+v %v", reopened, err)
+	}
+}
+
 func TestCharacterAPIValidationAndErrorCodes(t *testing.T) {
 	p := newCharacterPanel(t)
 	h := p.server.Handler()

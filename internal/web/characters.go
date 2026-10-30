@@ -7,16 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 
 	"aiboxy/internal/aibox"
 	"aiboxy/internal/characters"
 )
-
-// characterID matches exactly the ids characters.NewID creates. "default" is
-// allowed as well, so the API can answer 400 rather than 404 for the reserved
-// fallback.
-var characterID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func (s *Server) listCharacters(w http.ResponseWriter, _ *http.Request) {
 	info, err := s.Backend.Characters()
@@ -41,11 +35,10 @@ func (s *Server) createCharacter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateCharacter(w http.ResponseWriter, r *http.Request) {
+	// Ids are opaque store keys, not paths. Older files may contain ids such as
+	// "one", so the store decides whether an id exists; a format check here
+	// would hide those characters from edit and delete.
 	id := r.PathValue("id")
-	if id != characters.DefaultID && !characterID.MatchString(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "персонаж не найден"})
-		return
-	}
 	var in aibox.CharacterInput
 	if err := decodeCharacterBody(w, r, &in); err != nil {
 		characterBadRequest(w, err)
@@ -60,10 +53,6 @@ func (s *Server) updateCharacter(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteCharacter(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id != characters.DefaultID && !characterID.MatchString(id) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "персонаж не найден"})
-		return
-	}
 	if err := s.Backend.DeleteCharacter(id); err != nil {
 		characterFailure(w, err, "не удалось удалить персонажа")
 		return

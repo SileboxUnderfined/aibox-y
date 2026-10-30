@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -67,11 +68,27 @@ func Default() Character {
 // longer name.
 func DefaultCharacter() Character { return Default() }
 
-// NormalizeName compares names case-insensitively and without differences in
-// leading, trailing or repeated whitespace. It changes only those two
-// properties; punctuation and other spellings stay significant.
+// NormalizeName is the one canonical spelling used for uniqueness and for
+// matching a spoken name. Recognition lowercases text, folds ё to е and turns
+// punctuation such as the hyphen in «Человек-паук» into a space, so a stored
+// name must be folded the same way before it is compared. Keeping the rule in
+// one place means two names that sound identical can never both be stored and
+// a voice request cannot select the wrong one.
 func NormalizeName(name string) string {
-	return strings.ToLower(strings.Join(strings.Fields(name), " "))
+	name = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "ё", "е"), "Ё", "Е"))
+	var b strings.Builder
+	space := false
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			space = false
+		case !space && b.Len() > 0:
+			b.WriteByte(' ')
+			space = true
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // NewID returns a stable, opaque id for a character. IDs do not depend on the
@@ -201,14 +218,20 @@ func (s *Store) Active() Character {
 }
 
 // ActiveID is the id of the selected character; the default id when the
-// fallback is active.
+// fallback is active or the stored selection no longer exists.
 func (s *Store) ActiveID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeID == "" {
-		return DefaultID
-	}
-	return s.activeID
+	return s.activeIDLocked()
+}
+
+// Snapshot returns the character list and the active id from one locked read,
+// so callers cannot observe an id from one moment next to a list from another.
+// The active id is always either DefaultID or an id present in the list.
+func (s *Store) Snapshot() ([]Character, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneAll(s.characters), s.activeIDLocked()
 }
 
 // List returns user characters in creation order. The built-in default is
@@ -216,11 +239,7 @@ func (s *Store) ActiveID() string {
 func (s *Store) List() []Character {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Character, len(s.characters))
-	for i, c := range s.characters {
-		out[i] = clone(c)
-	}
-	return out
+	return cloneAll(s.characters)
 }
 
 // Get returns one character by id. The default id returns the built-in
@@ -362,6 +381,18 @@ func (s *Store) findLocked(id string) (Character, bool) {
 		}
 	}
 	return Character{}, false
+}
+
+// activeIDLocked canonicalizes a missing or stale selection to DefaultID so
+// ActiveID and Snapshot never expose an id that is absent from the list.
+func (s *Store) activeIDLocked() string {
+	if s.activeID == "" {
+		return DefaultID
+	}
+	if _, ok := s.findLocked(s.activeID); !ok {
+		return DefaultID
+	}
+	return s.activeID
 }
 
 func (s *Store) checkNameLocked(name, selfID string) error {

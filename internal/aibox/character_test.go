@@ -62,7 +62,7 @@ func mustCharacter(t *testing.T, store *characters.Store, c characters.Character
 // background title request.
 func answerSystems(llm *fakeLLM) []string {
 	var out []string
-	for _, system := range llm.systems {
+	for _, system := range llm.systemsSnapshot() {
 		if !strings.HasPrefix(system, "Придумай название") {
 			out = append(out, system)
 		}
@@ -88,7 +88,7 @@ func TestCharacterCommandStatusSwitchUnknownReset(t *testing.T) {
 	if f.resolver.inChat() {
 		t.Fatal("character command opened a chat")
 	}
-	if n := len(f.llm.calls); n != 0 {
+	if n := f.llm.callCount(); n != 0 {
 		t.Fatalf("character command reached LLM: %d calls", n)
 	}
 	if _, a := say(t, f.resolver, "персонаж Мориарти"); !strings.Contains(a, "Не знаю") || f.chars.ActiveID() != sherlock.ID {
@@ -97,8 +97,72 @@ func TestCharacterCommandStatusSwitchUnknownReset(t *testing.T) {
 	if _, a := say(t, f.resolver, "персонаж по умолчанию"); !strings.Contains(a, characters.DefaultName) || f.chars.ActiveID() != characters.DefaultID {
 		t.Fatalf("reset = %q active=%q", a, f.chars.ActiveID())
 	}
-	if n := len(f.llm.calls); n != 0 {
+	if n := f.llm.callCount(); n != 0 {
 		t.Fatalf("status/switch/reset reached LLM: %d calls", n)
+	}
+}
+
+func TestCharacterVoiceNameUsesSpeechNormalization(t *testing.T) {
+	f := setupCharacters(t)
+	artem := mustCharacter(t, f.chars, characters.Character{Name: "Артём", Prompt: "Ты Артём."})
+	if _, a := say(t, f.resolver, "персонаж артем"); f.chars.ActiveID() != artem.ID {
+		t.Fatalf("ё-name not selected: answer=%q active=%q", a, f.chars.ActiveID())
+	}
+	if _, a := say(t, f.resolver, "персонаж по умолчанию"); f.chars.ActiveID() != characters.DefaultID {
+		t.Fatalf("reset = %q active=%q", a, f.chars.ActiveID())
+	}
+	spider := mustCharacter(t, f.chars, characters.Character{Name: "Человек-паук", Prompt: "Ты герой."})
+	if _, a := say(t, f.resolver, "персонаж человек паук"); f.chars.ActiveID() != spider.ID {
+		t.Fatalf("punctuated name not selected: answer=%q active=%q", a, f.chars.ActiveID())
+	}
+	if _, err := f.chars.Create(characters.Character{Name: "человек паук"}); err == nil {
+		t.Fatal("a speech-equivalent duplicate name was accepted")
+	}
+}
+
+func TestCharactersSnapshotHasExactlyOneActive(t *testing.T) {
+	f := setupCharacters(t)
+	errs := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			c, err := f.chars.Create(characters.Character{Name: "Temp"})
+			if err == nil {
+				err = f.chars.SetActive(c.ID)
+			}
+			if err == nil {
+				err = f.chars.Delete(c.ID)
+			}
+			if err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	for i := 0; i < 5000; i++ {
+		info, err := f.resolver.Characters()
+		if err != nil {
+			t.Fatal(err)
+		}
+		active := 0
+		if info.Default.Active {
+			active++
+		}
+		for _, c := range info.Characters {
+			if c.Active {
+				active++
+			}
+		}
+		if active != 1 {
+			t.Fatalf("snapshot %d has %d active characters: active=%q default=%v list=%d", i, active, info.Active, info.Default.Active, len(info.Characters))
+		}
+	}
+	<-done
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
 	}
 }
 
