@@ -145,6 +145,40 @@ func itoa(i int) string {
 
 var ErrNotFound = errors.New("chat not found")
 
+// validID keeps a caller-supplied id from reaching files outside the store.
+func validID(id string) bool {
+	if len(id) != 16 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// Get returns one saved chat by id. Only the ids NewID creates are accepted.
+func (s *Store) Get(id string) (*Chat, error) {
+	if !validID(id) {
+		return nil, ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.path(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var c Chat
+	if err := json.Unmarshal(data, &c); err != nil || c.ID != id {
+		return nil, ErrNotFound
+	}
+	return &c, nil
+}
+
 // Find returns the saved chat whose name best matches a spoken query.
 func (s *Store) Find(query string) (*Chat, error) {
 	list, err := s.List()

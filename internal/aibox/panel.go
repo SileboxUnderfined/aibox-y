@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
@@ -96,6 +97,118 @@ type Update struct {
 	Commands map[string]*Phrases `json:"commands,omitempty"`
 }
 
+// Status is a small, secret-free snapshot for the overview and the header.
+type Status struct {
+	Status          string `json:"status"`
+	Model           string `json:"model"`
+	ModelTitle      string `json:"model_title"`
+	Providers       int    `json:"providers"`
+	ReadyProviders  int    `json:"ready_providers"`
+	Chats           int    `json:"chats"`
+	MemoryFacts     int    `json:"memory_facts"`
+	MemoryEnabled   bool   `json:"memory_enabled"`
+	SearchOn        bool   `json:"search_on"`
+	SearchReady     bool   `json:"search_ready"`
+	ActiveChat      string `json:"active_chat,omitempty"`
+	ActiveChatTitle string `json:"active_chat_title,omitempty"`
+}
+
+// ChatSummary is a chat list row; the messages stay in the store until one
+// chat is opened.
+type ChatSummary struct {
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Created  time.Time `json:"created"`
+	Updated  time.Time `json:"updated"`
+	Messages int       `json:"messages"`
+}
+
+// Status reports what is configured now without reading any secrets.
+func (r *Resolver) Status() Status {
+	r.mu.Lock()
+	s := Status{
+		Status:        "ok",
+		Model:         r.state.Model,
+		Providers:     len(r.opt.Models),
+		MemoryEnabled: r.memoryOnLocked(),
+		SearchOn:      !r.state.SearchOff,
+	}
+	if m, ok := r.opt.Models[r.state.Model]; ok {
+		s.ModelTitle = m.spoken()
+	}
+	for _, m := range r.opt.Models {
+		if os.Getenv(m.Config.APIKeyEnv) != "" {
+			s.ReadyProviders++
+		}
+	}
+	if r.active != nil {
+		s.ActiveChat = r.active.chat.ID
+		s.ActiveChatTitle = r.active.chat.Name
+	}
+	r.mu.Unlock()
+	s.SearchReady = r.opt.Search != nil && r.opt.Search.Ready()
+	if r.opt.Memory != nil {
+		s.MemoryFacts = len(r.opt.Memory.List())
+	}
+	if r.opt.Store != nil {
+		if list, err := r.opt.Store.List(); err == nil {
+			s.Chats = len(list)
+		}
+	}
+	return s
+}
+
+// Chats lists saved chats without their messages.
+func (r *Resolver) Chats() ([]ChatSummary, error) {
+	out := []ChatSummary{}
+	if r.opt.Store == nil {
+		return out, nil
+	}
+	list, err := r.opt.Store.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range list {
+		out = append(out, ChatSummary{ID: c.ID, Name: c.Name, Created: c.Created, Updated: c.Updated, Messages: len(c.Messages)})
+	}
+	return out, nil
+}
+
+// Chat returns one saved chat, messages included.
+func (r *Resolver) Chat(id string) (*chats.Chat, error) {
+	if r.opt.Store == nil {
+		return nil, chats.ErrNotFound
+	}
+	c, err := r.opt.Store.Get(id)
+	if errors.Is(err, chats.ErrNotFound) {
+		return nil, errors.New("чат не найден")
+	}
+	return c, err
+}
+
+// DeleteChat moves a chat to the trash and closes it if it is open, exactly
+// like the spoken "забудь чат" command.
+func (r *Resolver) DeleteChat(id string) error {
+	if r.opt.Store == nil {
+		return errors.New("чаты не настроены")
+	}
+	if _, err := r.opt.Store.Get(id); err != nil {
+		if errors.Is(err, chats.ErrNotFound) {
+			return errors.New("чат не найден")
+		}
+		return err
+	}
+	if err := r.opt.Store.Delete(id); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if r.active != nil && r.active.chat.ID == id {
+		r.active = nil
+	}
+	r.mu.Unlock()
+	return nil
+}
+
 func (r *Resolver) Settings() Settings {
 	r.mu.Lock()
 	s := Settings{Active: r.state.Model, UserPrompt: r.state.SystemPrompt, BasePrompt: r.state.BasePrompt, DefaultBasePrompt: r.opt.SystemPrompt, SearchOn: !r.state.SearchOff}
@@ -158,6 +271,9 @@ func providerType(c providers.Config) string {
 func (r *Resolver) Apply(u Update) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Validate everything before touching the live state: a rejected panel
+	// update must leave the settings, providers and state file as they were.
 	if u.Active != nil {
 		if m, ok := r.opt.Models[*u.Active]; !ok || m.SearchOnly {
 			return errors.New("unknown provider")
@@ -173,18 +289,8 @@ func (r *Resolver) Apply(u Update) error {
 			return errors.New("bad search mode for " + key)
 		}
 	}
-	for key, mode := range u.SearchModes {
-		if r.state.SearchModes == nil {
-			r.state.SearchModes = map[string]string{}
-		}
-		if mode == searchAuto {
-			delete(r.state.SearchModes, key)
-		} else {
-			r.state.SearchModes[key] = mode
-		}
-	}
+	var order []string
 	if u.SearchOrder != nil {
-		var order []string
 		for _, key := range *u.SearchOrder {
 			if _, ok := r.opt.Models[key]; key != tavilyBackend && !ok {
 				return errors.New("unknown search provider: " + key)
@@ -193,10 +299,6 @@ func (r *Resolver) Apply(u Update) error {
 				order = append(order, key)
 			}
 		}
-		r.state.SearchOrder = order
-	}
-	if u.SearchOn != nil {
-		r.state.SearchOff = !*u.SearchOn
 	}
 	for id, p := range u.Commands {
 		if _, ok := commandByID(id); !ok {
@@ -215,15 +317,62 @@ func (r *Resolver) Apply(u Update) error {
 			}
 		}
 	}
+	// Build the replacement completers now, so a provider that cannot be
+	// constructed is rejected before any model is changed.
+	type modelUpdate struct {
+		key      string
+		config   providers.Config
+		complete providers.Completer
+	}
+	var modelUpdates []modelUpdate
 	for key, id := range u.ModelIDs {
-		id = strings.TrimSpace(id)
-		if err := r.opt.Models[key].setModelID(id); err != nil {
+		m := r.opt.Models[key]
+		cfg := m.Config
+		cfg.Model = strings.TrimSpace(id)
+		completer, err := providers.New(cfg)
+		if err != nil {
 			return err
 		}
+		modelUpdates = append(modelUpdates, modelUpdate{key: key, config: cfg, complete: completer})
+	}
+
+	oldState := r.state.clone()
+	oldCommands := r.cmds
+	oldModels := map[string]Model{}
+	for _, mu := range modelUpdates {
+		oldModels[mu.key] = *r.opt.Models[mu.key]
+	}
+	restore := func() {
+		r.state = oldState
+		r.cmds = oldCommands
+		for key, m := range oldModels {
+			*r.opt.Models[key] = m
+		}
+	}
+
+	for key, mode := range u.SearchModes {
+		if r.state.SearchModes == nil {
+			r.state.SearchModes = map[string]string{}
+		}
+		if mode == searchAuto {
+			delete(r.state.SearchModes, key)
+		} else {
+			r.state.SearchModes[key] = mode
+		}
+	}
+	if u.SearchOrder != nil {
+		r.state.SearchOrder = order
+	}
+	if u.SearchOn != nil {
+		r.state.SearchOff = !*u.SearchOn
+	}
+	for _, mu := range modelUpdates {
+		m := r.opt.Models[mu.key]
+		m.Config, m.Completer = mu.config, mu.complete
 		if r.state.ModelIDs == nil {
 			r.state.ModelIDs = map[string]string{}
 		}
-		r.state.ModelIDs[key] = id
+		r.state.ModelIDs[mu.key] = mu.config.Model
 	}
 	if u.Active != nil {
 		r.state.Model = *u.Active
@@ -250,7 +399,43 @@ func (r *Resolver) Apply(u Update) error {
 	if len(u.Commands) > 0 {
 		r.applyCommandsLocked(u.Commands)
 	}
-	return saveState(r.opt.StatePath, r.state)
+	if err := saveState(r.opt.StatePath, r.state); err != nil {
+		restore()
+		return err
+	}
+	return nil
+}
+
+// clone copies the mutable parts of state so a failed apply can be rolled back.
+func (s state) clone() state {
+	c := s
+	if s.ModelIDs != nil {
+		c.ModelIDs = make(map[string]string, len(s.ModelIDs))
+		for k, v := range s.ModelIDs {
+			c.ModelIDs[k] = v
+		}
+	}
+	if s.SearchModes != nil {
+		c.SearchModes = make(map[string]string, len(s.SearchModes))
+		for k, v := range s.SearchModes {
+			c.SearchModes[k] = v
+		}
+	}
+	if s.SearchOrder != nil {
+		c.SearchOrder = append([]string(nil), s.SearchOrder...)
+	}
+	if s.MemoryExcluded != nil {
+		c.MemoryExcluded = append([]string(nil), s.MemoryExcluded...)
+	}
+	c.Custom = append([]CustomProvider(nil), s.Custom...)
+	if s.Commands != nil {
+		c.Commands = make(map[string]Phrases, len(s.Commands))
+		for k, v := range s.Commands {
+			v.Add = append([]string(nil), v.Add...)
+			c.Commands[k] = v
+		}
+	}
+	return c
 }
 
 func (r *Resolver) applyCommandsLocked(changes map[string]*Phrases) {

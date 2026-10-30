@@ -110,6 +110,8 @@ func (r *Resolver) SaveProvider(c CustomProvider) (CustomProvider, error) {
 	if err != nil {
 		return c, err
 	}
+	oldState := r.state.clone()
+	oldModel, hadModel := r.opt.Models[c.Key]
 	if index >= 0 {
 		r.state.Custom[index] = c
 	} else {
@@ -126,7 +128,16 @@ func (r *Resolver) SaveProvider(c CustomProvider) (CustomProvider, error) {
 	}
 	delete(r.state.ModelIDs, c.Key)
 	r.opt.Models[c.Key] = m
-	return c, saveState(r.opt.StatePath, r.state)
+	if err := saveState(r.opt.StatePath, r.state); err != nil {
+		r.state = oldState
+		if hadModel {
+			r.opt.Models[c.Key] = oldModel
+		} else {
+			delete(r.opt.Models, c.Key)
+		}
+		return c, err
+	}
+	return c, nil
 }
 
 // RemoveProvider deletes a custom provider and returns its key variable.
@@ -138,6 +149,8 @@ func (r *Resolver) RemoveProvider(key string) (string, error) {
 		return "", errors.New("можно удалить только добавленный провайдер")
 	}
 	env := r.state.Custom[index].KeyEnv()
+	oldState := r.state.clone()
+	oldModel := r.opt.Models[key]
 	r.state.Custom = append(r.state.Custom[:index], r.state.Custom[index+1:]...)
 	delete(r.opt.Models, key)
 	delete(r.state.ModelIDs, key)
@@ -146,5 +159,10 @@ func (r *Resolver) RemoveProvider(key string) (string, error) {
 	if r.state.Model == key {
 		r.state.Model = r.opt.DefaultModel
 	}
-	return env, saveState(r.opt.StatePath, r.state)
+	if err := saveState(r.opt.StatePath, r.state); err != nil {
+		r.state = oldState
+		r.opt.Models[key] = oldModel
+		return "", err
+	}
+	return env, nil
 }
