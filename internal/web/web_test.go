@@ -17,11 +17,12 @@ import (
 )
 
 type fake struct {
-	applied  []aibox.Update
-	applyErr error
-	custom   bool
-	facts    []string
-	deleted  []string
+	applied      []aibox.Update
+	applyErr     error
+	custom       bool
+	facts        []string
+	deleted      []string
+	characterErr error
 }
 
 func (f *fake) AddFact(text string) error { f.facts = append(f.facts, "add "+text); return nil }
@@ -69,6 +70,38 @@ func (f *fake) Chat(id string) (*chats.Chat, error) {
 func (f *fake) DeleteChat(id string) error {
 	f.deleted = append(f.deleted, id)
 	return nil
+}
+
+// The character methods are enough for guard and error-path tests; the full
+// CRUD behaviour is covered against a real resolver in characters_test.go.
+func (f *fake) Characters() (aibox.CharactersInfo, error) {
+	if f.characterErr != nil {
+		return aibox.CharactersInfo{}, f.characterErr
+	}
+	return aibox.CharactersInfo{
+		Characters: []aibox.CharacterInfo{},
+		Active:     "default",
+		Default:    aibox.CharacterInfo{ID: "default", Name: "По умолчанию", Rules: []string{}, Active: true},
+		Limits:     aibox.CharacterLimits{Name: 80, Prompt: 8000, Rules: 30, Rule: 500},
+	}, nil
+}
+func (f *fake) CreateCharacter(in aibox.CharacterInput) (aibox.CharacterInfo, error) {
+	if f.characterErr != nil {
+		return aibox.CharacterInfo{}, f.characterErr
+	}
+	return aibox.CharacterInfo{ID: "0123456789abcdef", Name: in.Name, Prompt: in.Prompt, Rules: in.Rules}, nil
+}
+func (f *fake) UpdateCharacter(id string, in aibox.CharacterInput) (aibox.CharacterInfo, error) {
+	if f.characterErr != nil {
+		return aibox.CharacterInfo{}, f.characterErr
+	}
+	return aibox.CharacterInfo{ID: id, Name: in.Name, Prompt: in.Prompt, Rules: in.Rules}, nil
+}
+func (f *fake) DeleteCharacter(string) error {
+	return f.characterErr
+}
+func (f *fake) SetActiveCharacter(string) error {
+	return f.characterErr
 }
 
 func do(h http.Handler, method, path, body string, marked bool) *httptest.ResponseRecorder {

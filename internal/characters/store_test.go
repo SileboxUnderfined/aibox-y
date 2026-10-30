@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func openStore(t *testing.T) (*Store, string) {
@@ -388,5 +389,51 @@ func TestSavedFileIsPrivateAndHasNoTemporaryLeftovers(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temporary file left behind: %v", err)
+	}
+}
+
+func TestFieldLimitsAreEnforcedByStore(t *testing.T) {
+	s, _ := openStore(t)
+
+	ok, err := s.Create(Character{
+		Name:   strings.Repeat("я", MaxNameRunes),
+		Prompt: strings.Repeat("п", MaxPromptRunes),
+		Rules:  []string{strings.Repeat("п", MaxRuleRunes)},
+	})
+	if err != nil {
+		t.Fatalf("maximum valid character: %v", err)
+	}
+	if utf8.RuneCountInString(ok.Name) != MaxNameRunes || utf8.RuneCountInString(ok.Prompt) != MaxPromptRunes {
+		t.Fatalf("limits changed stored text: %d %d", utf8.RuneCountInString(ok.Name), utf8.RuneCountInString(ok.Prompt))
+	}
+
+	for _, tc := range []struct {
+		name string
+		c    Character
+		want error
+	}{
+		{"name too long", Character{Name: strings.Repeat("я", MaxNameRunes+1)}, ErrNameTooLong},
+		{"prompt too long", Character{Name: "Второй", Prompt: strings.Repeat("п", MaxPromptRunes+1)}, ErrPromptTooLong},
+		{"too many rules", Character{Name: "Третий", Rules: make([]string, MaxRules+1)}, ErrTooManyRules},
+		{"rule too long", Character{Name: "Четвёртый", Rules: []string{strings.Repeat("п", MaxRuleRunes+1)}}, ErrRuleTooLong},
+	} {
+		if tc.name == "too many rules" {
+			for i := range tc.c.Rules {
+				tc.c.Rules[i] = "правило"
+			}
+		}
+		if _, err := s.Create(tc.c); !errors.Is(err, tc.want) {
+			t.Errorf("%s: error = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+
+	if _, err := s.Update(Character{ID: ok.ID, Name: "Новое", Prompt: strings.Repeat("п", MaxPromptRunes+1)}); !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("update accepted an oversized prompt: %v", err)
+	}
+	if _, err := s.Update(Character{ID: ok.ID, Name: strings.Repeat("я", MaxNameRunes+1)}); !errors.Is(err, ErrNameTooLong) {
+		t.Fatalf("update accepted an oversized name: %v", err)
+	}
+	if list := s.List(); len(list) != 1 || list[0].Name != ok.Name || list[0].Prompt != ok.Prompt {
+		t.Fatalf("rejected writes changed the list: %+v", list)
 	}
 }

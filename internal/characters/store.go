@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 const (
@@ -23,6 +24,14 @@ const (
 	// DefaultName is the name shown for the fallback character.
 	DefaultName = "По умолчанию"
 
+	// MaxNameRunes, MaxPromptRunes, MaxRules and MaxRuleRunes bound every
+	// stored field. They keep a malicious or accidental panel request from
+	// filling the small settings partition with an unbounded persona.
+	MaxNameRunes   = 80
+	MaxPromptRunes = 8000
+	MaxRules       = 30
+	MaxRuleRunes   = 500
+
 	formatVersion = 1
 )
 
@@ -31,6 +40,10 @@ var (
 	ErrDuplicateName = errors.New("character name already exists")
 	ErrEmptyName     = errors.New("character name is empty")
 	ErrDefault       = errors.New("the default character cannot be changed")
+	ErrNameTooLong   = errors.New("character name is too long")
+	ErrPromptTooLong = errors.New("character prompt is too long")
+	ErrTooManyRules  = errors.New("too many character rules")
+	ErrRuleTooLong   = errors.New("character rule is too long")
 )
 
 // Character is one persona: a stable id, a display name, its own prompt and
@@ -230,15 +243,17 @@ func (s *Store) Get(id string) (Character, error) {
 // the caller, which keeps identities stable across renames.
 func (s *Store) Create(c Character) (Character, error) {
 	name := cleanName(c.Name)
-	if name == "" {
-		return Character{}, ErrEmptyName
+	prompt := cleanPrompt(c.Prompt)
+	rules := cleanRules(c.Rules)
+	if err := validateFields(name, prompt, rules); err != nil {
+		return Character{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkNameLocked(name, ""); err != nil {
 		return Character{}, err
 	}
-	c = Character{ID: s.newIDLocked(), Name: name, Prompt: cleanPrompt(c.Prompt), Rules: cleanRules(c.Rules)}
+	c = Character{ID: s.newIDLocked(), Name: name, Prompt: prompt, Rules: rules}
 	next := append(cloneAll(s.characters), c)
 	if err := s.saveLocked(next, s.activeID); err != nil {
 		return Character{}, err
@@ -255,8 +270,10 @@ func (s *Store) Update(c Character) (Character, error) {
 		return Character{}, ErrDefault
 	}
 	name := cleanName(c.Name)
-	if name == "" {
-		return Character{}, ErrEmptyName
+	prompt := cleanPrompt(c.Prompt)
+	rules := cleanRules(c.Rules)
+	if err := validateFields(name, prompt, rules); err != nil {
+		return Character{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,7 +291,7 @@ func (s *Store) Update(c Character) (Character, error) {
 		return Character{}, err
 	}
 	next := cloneAll(s.characters)
-	next[index] = Character{ID: id, Name: name, Prompt: cleanPrompt(c.Prompt), Rules: cleanRules(c.Rules)}
+	next[index] = Character{ID: id, Name: name, Prompt: prompt, Rules: rules}
 	if err := s.saveLocked(next, s.activeID); err != nil {
 		return Character{}, err
 	}
@@ -457,6 +474,31 @@ func cleanRules(rules []string) []string {
 		}
 	}
 	return out
+}
+
+// validateFields enforces the field limits on already-normalized values. It
+// is shared by Create, Update and the panel, so every write path has the same
+// bounds and no caller can bypass them by posting directly to the API.
+func validateFields(name, prompt string, rules []string) error {
+	if name == "" {
+		return ErrEmptyName
+	}
+	if utf8.RuneCountInString(name) > MaxNameRunes {
+		return ErrNameTooLong
+	}
+	if utf8.RuneCountInString(prompt) > MaxPromptRunes {
+		return ErrPromptTooLong
+	}
+	rules = cleanRules(rules)
+	if len(rules) > MaxRules {
+		return ErrTooManyRules
+	}
+	for _, rule := range rules {
+		if utf8.RuneCountInString(rule) > MaxRuleRunes {
+			return ErrRuleTooLong
+		}
+	}
+	return nil
 }
 
 func clone(c Character) Character {
