@@ -486,3 +486,103 @@ func TestCharacterPhraseSettingAndTemporaryMemory(t *testing.T) {
 		t.Fatalf("temporary memory changed: %q", system)
 	}
 }
+
+func TestShowPromptDefaultKeepsPreviousAnswers(t *testing.T) {
+	f := setupCharacters(t)
+	// A stored but inactive character must not change the default answer.
+	mustCharacter(t, f.chars, characters.Character{Name: "Шерлок", Prompt: "Ты сыщик."})
+	if route, a := say(t, f.resolver, "какой промпт"); route != "llm" || a != "Сейчас обычный системный промпт, без дополнительной роли." {
+		t.Fatalf("default answer = %s %q", route, a)
+	}
+	say(t, f.resolver, "системный промпт отвечай как пират")
+	if _, a := say(t, f.resolver, "какая у тебя роль"); a != "Сейчас системный промпт: Отвечай как пират." {
+		t.Fatalf("custom prompt answer = %q", a)
+	}
+	if n := f.llm.callCount(); n != 0 {
+		t.Fatalf("prompt commands reached LLM: %d calls", n)
+	}
+	if list, err := f.chats.List(); err != nil || len(list) != 0 {
+		t.Fatalf("prompt commands created chats: %+v err=%v", list, err)
+	}
+}
+
+func TestShowPromptReportsSelectedCharacterAndUserInstructions(t *testing.T) {
+	f := setupCharacters(t)
+	sherlock := mustCharacter(t, f.chars, characters.Character{
+		Name:   "Шерлок",
+		Prompt: "Ты Шерлок Холмс.",
+		Rules:  []string{"Говори кратко.", "Не выдумывай."},
+	})
+	if err := f.chars.SetActive(sherlock.ID); err != nil {
+		t.Fatal(err)
+	}
+	say(t, f.resolver, "системный промпт отвечай как пират")
+
+	route, answer := say(t, f.resolver, "какой промпт")
+	if route != "llm" {
+		t.Fatalf("route = %s", route)
+	}
+	for _, want := range []string{
+		"Сейчас персонаж «Шерлок»",
+		"Промпт персонажа: Ты Шерлок Холмс.",
+		"Правила персонажа: Говори кратко. Не выдумывай.",
+		"Указания пользователя: Отвечай как пират.",
+		"не полный фактический промпт",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer %q does not contain %q", answer, want)
+		}
+	}
+	if strings.Contains(answer, "голосовой ассистент") {
+		t.Fatalf("answer claims to show the whole prompt: %q", answer)
+	}
+	if n := f.llm.callCount(); n != 0 {
+		t.Fatalf("prompt command reached LLM: %d calls", n)
+	}
+	if list, err := f.chats.List(); err != nil || len(list) != 0 {
+		t.Fatalf("prompt command created chats: %+v err=%v", list, err)
+	}
+	if f.resolver.inChat() {
+		t.Fatal("prompt command opened a chat")
+	}
+}
+
+func TestShowPromptReportsCharacterWithoutOwnPrompt(t *testing.T) {
+	f := setupCharacters(t)
+	mute := mustCharacter(t, f.chars, characters.Character{Name: "Молчун"})
+	if err := f.chars.SetActive(mute.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, a := say(t, f.resolver, "какая у тебя роль"); !strings.Contains(a, "Молчун") || !strings.Contains(a, "Своего промпта и правил у персонажа нет.") {
+		t.Fatalf("answer = %q", a)
+	}
+}
+
+func TestShowPromptCommandStaysOutOfHistory(t *testing.T) {
+	f := setupCharacters(t)
+	sherlock := mustCharacter(t, f.chars, characters.Character{Name: "Шерлок", Prompt: "Ты Шерлок Холмс."})
+	if err := f.chars.SetActive(sherlock.ID); err != nil {
+		t.Fatal(err)
+	}
+	say(t, f.resolver, "новый чат разговор")
+	if _, a := say(t, f.resolver, "кто ты"); a != "ответ кто ты" {
+		t.Fatalf("answer = %q", a)
+	}
+	if _, a := say(t, f.resolver, "какая у тебя роль"); !strings.Contains(a, "Ты Шерлок Холмс.") {
+		t.Fatalf("prompt answer = %q", a)
+	}
+	say(t, f.resolver, "закрой чат")
+	list, err := f.chats.List()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("chats = %+v err=%v", list, err)
+	}
+	msgs := list[0].Messages
+	if len(msgs) != 2 || msgs[0].Content != "кто ты" {
+		t.Fatalf("history was rewritten by the prompt command: %+v", msgs)
+	}
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "Шерлок") || strings.Contains(m.Content, "Промпт персонажа") {
+			t.Fatalf("prompt leaked into history: %+v", m)
+		}
+	}
+}

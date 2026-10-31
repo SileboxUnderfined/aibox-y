@@ -372,10 +372,38 @@ func (r *Resolver) handle(ctx context.Context, text string, character characters
 		r.mu.Lock()
 		custom := r.state.SystemPrompt
 		r.mu.Unlock()
-		if custom == "" {
-			return "Сейчас обычный системный промпт, без дополнительной роли.", true
+		if character.IsDefault() {
+			if custom == "" {
+				return "Сейчас обычный системный промпт, без дополнительной роли.", true
+			}
+			return "Сейчас системный промпт: " + custom + ".", true
 		}
-		return "Сейчас системный промпт: " + custom + ".", true
+		// The command describes the selected persona and the user's own
+		// instruction. It never claims to read the assembled factual prompt,
+		// which also holds the base and technical layers.
+		var parts []string
+		parts = append(parts, "Сейчас персонаж «"+character.Name+"».")
+		prompt := strings.TrimSpace(character.Prompt)
+		if prompt != "" {
+			parts = append(parts, "Промпт персонажа: "+spokenField(prompt))
+		}
+		rules := make([]string, 0, len(character.Rules))
+		for _, rule := range character.Rules {
+			if rule = strings.TrimSpace(rule); rule != "" {
+				rules = append(rules, strings.TrimSuffix(rule, "."))
+			}
+		}
+		if len(rules) > 0 {
+			parts = append(parts, "Правила персонажа: "+spokenField(strings.Join(rules, ". ")))
+		}
+		if prompt == "" && len(rules) == 0 {
+			parts = append(parts, "Своего промпта и правил у персонажа нет.")
+		}
+		if custom != "" {
+			parts = append(parts, "Указания пользователя: "+spokenField(custom))
+		}
+		parts = append(parts, "Это роль персонажа и указания пользователя, а не полный фактический промпт: к ним добавляются общие и технические инструкции.")
+		return strings.Join(parts, " "), true
 	}
 	return r.ask(ctx, text, character)
 }
@@ -604,4 +632,19 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(string(r[:1])) + string(r[1:])
+}
+
+// spokenField ends a stored field with a full stop for speech, without
+// repeating punctuation the user already typed.
+func spokenField(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	for _, mark := range []string{".", "!", "?", "…", "»"} {
+		if strings.HasSuffix(s, mark) {
+			return s
+		}
+	}
+	return s + "."
 }

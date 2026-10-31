@@ -127,3 +127,78 @@ func TestEngineWithoutCharactersKeepsOldPrompt(t *testing.T) {
 		t.Fatalf("old base prompt changed: %q", got[0].Content)
 	}
 }
+
+func TestEngineFallbackSnapshotsCharacterForDirectCallers(t *testing.T) {
+	source := &sequenceCharacters{list: []characters.Character{
+		{ID: "sherlock", Name: "Шерлок", Prompt: "Ты Шерлок Холмс."},
+		{ID: "watson", Name: "Ватсон", Prompt: "Ты доктор Ватсон."},
+	}}
+	var systems []string
+	e := &Engine{Characters: source, LLM: completionFunc(func(_ context.Context, m []llm.Message, structured bool) (string, error) {
+		systems = append(systems, m[0].Content)
+		return "Ответ", nil
+	})}
+	if _, err := e.Fallback(t.Context(), "первый"); err != nil {
+		t.Fatal(err)
+	}
+	if source.CallCount() != 1 {
+		t.Fatalf("snapshot calls for one direct fallback = %d", source.CallCount())
+	}
+	if len(systems) != 1 {
+		t.Fatalf("prompts = %q", systems)
+	}
+	system := systems[0]
+	base := strings.Index(system, "Ты голосовой помощник")
+	role := strings.Index(system, "Ты Шерлок Холмс.")
+	technical := strings.Index(system, "Технические инструкции")
+	if base < 0 || role < 0 || technical < 0 || !(base < role && role < technical) {
+		t.Fatalf("bad prompt layers: base=%d role=%d technical=%d in %q", base, role, technical, system)
+	}
+	if _, err := e.Fallback(t.Context(), "второй"); err != nil {
+		t.Fatal(err)
+	}
+	if source.CallCount() != 2 {
+		t.Fatalf("snapshot calls after two direct fallbacks = %d", source.CallCount())
+	}
+	if len(systems) != 2 || strings.Contains(systems[0], "Ватсон") || !strings.Contains(systems[1], "Ты доктор Ватсон.") {
+		t.Fatalf("snapshot leaked across direct fallbacks: %q", systems)
+	}
+}
+
+func TestEngineFallbackKeepsExistingCharacterSnapshot(t *testing.T) {
+	source := &sequenceCharacters{list: []characters.Character{
+		{ID: "watson", Name: "Ватсон", Prompt: "Ты доктор Ватсон."},
+	}}
+	var got []llm.Message
+	e := &Engine{Characters: source, LLM: completionFunc(func(_ context.Context, m []llm.Message, structured bool) (string, error) {
+		got = m
+		return "Ответ", nil
+	})}
+	ctx := snapshotCharacter(t.Context(), fixedCharacters{active: characters.Character{ID: "sherlock", Name: "Шерлок", Prompt: "Ты Шерлок Холмс."}})
+	if _, err := e.Fallback(ctx, "вопрос"); err != nil {
+		t.Fatal(err)
+	}
+	if source.CallCount() != 0 {
+		t.Fatalf("existing snapshot was replaced: source calls = %d", source.CallCount())
+	}
+	if len(got) == 0 || !strings.Contains(got[0].Content, "Ты Шерлок Холмс.") || strings.Contains(got[0].Content, "Ватсон") {
+		t.Fatalf("wrong prompt for existing snapshot: %+v", got)
+	}
+}
+
+func TestEngineFallbackWithoutCharactersKeepsOldPrompt(t *testing.T) {
+	var got []llm.Message
+	e := &Engine{LLM: completionFunc(func(_ context.Context, m []llm.Message, structured bool) (string, error) {
+		got = m
+		return "Ответ", nil
+	})}
+	if _, err := e.Fallback(t.Context(), "вопрос"); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Role != "system" || got[1].Role != "user" {
+		t.Fatalf("messages = %+v", got)
+	}
+	if !strings.HasPrefix(got[0].Content, "Ты голосовой помощник") || strings.Contains(got[0].Content, "Роль персонажа") || strings.Contains(got[0].Content, "\n\n") {
+		t.Fatalf("old base prompt changed without characters: %q", got[0].Content)
+	}
+}

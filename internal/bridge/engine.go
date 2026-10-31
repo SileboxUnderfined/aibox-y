@@ -145,6 +145,10 @@ func (e *Engine) answerCompleter() Completer {
 }
 
 func (e *Engine) Fallback(ctx context.Context, text string) (Resolution, error) {
+	if _, ok := characterSnapshot(ctx); !ok {
+		// Direct callers get the same one-snapshot guarantee as Resolve.
+		ctx = snapshotCharacter(ctx, e.Characters)
+	}
 	if strings.Contains(strings.ToLower(text), "сайт") || webaddress.MusicRequest(text) {
 		text = webaddress.Normalize(text)
 	}
