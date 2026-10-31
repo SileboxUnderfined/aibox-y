@@ -1,6 +1,7 @@
 ---
 description: Исследует проект и внешние источники для решения задачи
 mode: subagent
+model: openai/gpt-6.1-terra#medium
 permissions:
   - action: edit
     resource: "*"
