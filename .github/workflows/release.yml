@@ -24,20 +24,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           size=$(du -h dist/aibox-pkg/bin/aibox | cut -f1)
-          cat > notes.md <<NOTES
-          Плагин для Станции Мини 2 (linux/arm64). Бинарник после распаковки: ${size}.
-
-          Установка или обновление одной командой с компьютера (нужен SSH-доступ к колонке):
-
-          \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh -s -- --version ${TAG} <ip>
-          \`\`\`
-
-          Добавь \`--chat\`, чтобы сразу включить чаты и переключить Алису на AIBox.
-          Файл \`.yap\` можно загрузить через веб-панель Luna или старого YAM (нужна галочка «Разрешить бинарники плагинов»).
-
-          Проверка: \`sha256sum -c SHA256SUMS --ignore-missing\`.
-          NOTES
+          packaging/release/notes.sh "$TAG" "$size" > notes.md
           prerelease=
           case "$TAG" in *-*) prerelease=--prerelease ;; esac
           gh release create "$TAG" $prerelease --title "AIBox $TAG" --notes-file notes.md \
