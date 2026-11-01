@@ -31,6 +31,40 @@ func TestPromptOrderAndOneCharacterCopy(t *testing.T) {
 	}
 }
 
+func TestPromptCharacterOwnsIdentityWithoutOverridingTechnicalRules(t *testing.T) {
+	base := "Ты голосовой ассистент."
+	active := Character{ID: "sherlock", Name: "Шерлок", Prompt: "Ты Шерлок Холмс.", Rules: []string{"Говори кратко."}}
+	got := Prompt(base, active, "")
+
+	for _, want := range []string{
+		"разговорную роль",
+		"самопредставление",
+		"«кто ты»",
+		"важнее общего описания ассистента",
+		"Технические инструкции",
+		"безопасность",
+		"памяти и поиска",
+		"не притворяйся человеком",
+		"что ты ИИ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("identity/precedence text %q is missing: %q", want, got)
+		}
+	}
+	if !strings.HasPrefix(got, base) {
+		t.Fatalf("the base prompt was changed: %q", got)
+	}
+	if strings.Index(got, "важнее общего описания ассистента") > strings.Index(got, "Технические инструкции") {
+		t.Fatal("identity precedence must not move technical instructions ahead of the role and rules")
+	}
+	if strings.Index(got, "Технические инструкции") < strings.Index(got, "Правила персонажа") {
+		t.Fatal("technical priority must follow the character rules")
+	}
+	if !strings.Contains(got, "сохраняя роль") {
+		t.Fatalf("honest AI self-description should keep the role: %q", got)
+	}
+}
+
 func TestPromptDefaultKeepsOldBehavior(t *testing.T) {
 	base := "старый системный промпт"
 	context := "контекст поиска и памяти"

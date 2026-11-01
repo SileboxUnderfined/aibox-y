@@ -11,10 +11,10 @@ import "strings"
 //     and search instructions.
 //
 // The order is fixed so a request is reproducible, but position is not
-// precedence: the character layer says explicitly that technical instructions
-// win. The base and context are never stored on the character, and the
-// character is never appended to chat history, so prompts cannot accumulate
-// from one turn to the next.
+// precedence: the character layer owns conversational identity while saying
+// explicitly that technical and safety instructions win. The base and context
+// are never stored on the character, and the character is never appended to
+// chat history, so prompts cannot accumulate from one turn to the next.
 //
 // The built-in default character contributes no layer. With it Prompt returns
 // exactly base joined to context, preserving the old prompt when no character
@@ -72,8 +72,11 @@ func (c Character) block() string {
 			b.WriteString(rule)
 		}
 	}
-	// The layer order is fixed, but technical instructions stay authoritative
-	// wherever they appear: a persona must not disable tools or memory search.
-	b.WriteString("\nТехнические инструкции, служебные форматы инструментов, памяти и поиска важнее характера и правил персонажа: при конфликте выполняй их.")
+	// The layer order is fixed, but the character owns conversational identity
+	// while technical and safety instructions stay authoritative: a persona
+	// must not disable tools, memory search or honest self-description.
+	b.WriteString("\nВыбранный персонаж задаёт разговорную роль, самопредставление и ответ на вопрос «кто ты»; в этих вопросах он важнее общего описания ассистента.")
+	b.WriteString("\nТехнические инструкции, безопасность, служебные форматы инструментов, памяти и поиска важнее характера и правил персонажа: при конфликте выполняй их.")
+	b.WriteString("\nЕсли прямо спрашивают, человек ли ты или ИИ, не притворяйся человеком: честно скажи, что ты ИИ, сохраняя роль.")
 	return b.String()
 }
