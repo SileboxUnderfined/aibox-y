@@ -86,6 +86,13 @@ func loadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// askSystemPrompt builds the one-shot --ask prompt. Without a character it is
+// the old default prompt; a stored character replaces that global layer while
+// the mandatory built-in rules stay.
+func askSystemPrompt(active characters.Character) string {
+	return characters.Prompt(characters.BuiltinPrompt, aibox.DefaultSystemPrompt, active, "")
+}
+
 func main() {
 	path := flag.String("config", "config.json", "configuration file")
 	check := flag.Bool("check-config", false, "validate configuration and exit")
@@ -148,7 +155,7 @@ func main() {
 			} else if providers.NativeSearch(models[cfg.Provider].Config) != "" {
 				ctx = providers.WithSearch(ctx, providers.Search{Mode: providers.SearchNative})
 			}
-			system := characters.Prompt(aibox.DefaultSystemPrompt, characterStore.Active(), "")
+			system := askSystemPrompt(characterStore.Active())
 			answer, err := provider.Complete(ctx, system, []providers.Message{{Role: "user", Content: *ask}})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)

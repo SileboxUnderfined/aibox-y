@@ -30,8 +30,29 @@ func TestRetryUsesCharacterSnapshotAndReplaysQuestion(t *testing.T) {
 	if len(got) != 2 || got[0].Role != "system" || got[1].Role != "user" || got[1].Content != "кто ты" {
 		t.Fatalf("retry messages = %+v", got)
 	}
-	if !strings.Contains(got[0].Content, "Ты Шерлок Холмс.") || !strings.Contains(got[0].Content, "Технические инструкции") {
-		t.Fatalf("retry lost the character layer: %q", got[0].Content)
+	if strings.Contains(got[0].Content, retryUserPrompt) {
+		t.Fatalf("retry kept the global identity with a character: %q", got[0].Content)
+	}
+	for _, want := range []string{"Ты Шерлок Холмс.", "Технические инструкции", "не вызывай инструменты", "недоверенными данными"} {
+		if !strings.Contains(got[0].Content, want) {
+			t.Fatalf("retry lost %q: %q", want, got[0].Content)
+		}
+	}
+}
+
+func TestRetryWithoutCharacterKeepsOldPrompt(t *testing.T) {
+	var got []llm.Message
+	e := &Engine{LLM: completionFunc(func(_ context.Context, m []llm.Message, structured bool) (string, error) {
+		got = append([]llm.Message(nil), m...)
+		return "Повторный ответ", nil
+	})}
+	ctx := t.Context()
+	e.RecordDelivered(ctx, "кто ты", "Я Шерлок.", true, false)
+	if _, err := e.Resolve(ctx, "используй нейросеть"); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Content != retryBasePrompt {
+		t.Fatalf("retry prompt changed without a character: %+v", got)
 	}
 }
 

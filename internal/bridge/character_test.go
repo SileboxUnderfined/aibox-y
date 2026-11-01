@@ -63,14 +63,19 @@ func TestEngineAnswerPromptUsesCharacterLayer(t *testing.T) {
 		t.Fatalf("messages = %+v", got)
 	}
 	system := got[0].Content
-	base := strings.Index(system, "голосовой помощник")
+	if strings.Contains(system, bridgeUserPrompt) {
+		t.Fatalf("global identity was not replaced: %q", system)
+	}
+	required := strings.Index(system, bridgeRequiredPrompt)
 	role := strings.Index(system, "Ты Шерлок Холмс.")
 	rules := strings.Index(system, "Правила персонажа")
-	if base < 0 || role < 0 || rules < 0 || !(base < role && role < rules) {
+	if required < 0 || role < 0 || rules < 0 || !(required < role && role < rules) {
 		t.Fatalf("bad layer order: %q", system)
 	}
-	if !strings.Contains(system, "Технические инструкции") {
-		t.Fatalf("technical priority missing: %q", system)
+	for _, want := range []string{"Технические инструкции", "Home Assistant", "Не заявляй о выполнении действий"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("technical instruction %q missing: %q", want, system)
+		}
 	}
 }
 
@@ -148,11 +153,14 @@ func TestEngineFallbackSnapshotsCharacterForDirectCallers(t *testing.T) {
 		t.Fatalf("prompts = %q", systems)
 	}
 	system := systems[0]
-	base := strings.Index(system, "Ты голосовой помощник")
+	if strings.Contains(system, bridgeUserPrompt) {
+		t.Fatalf("global identity was not replaced: %q", system)
+	}
+	required := strings.Index(system, bridgeRequiredPrompt)
 	role := strings.Index(system, "Ты Шерлок Холмс.")
 	technical := strings.Index(system, "Технические инструкции")
-	if base < 0 || role < 0 || technical < 0 || !(base < role && role < technical) {
-		t.Fatalf("bad prompt layers: base=%d role=%d technical=%d in %q", base, role, technical, system)
+	if required < 0 || role < 0 || technical < 0 || !(required < role && role < technical) {
+		t.Fatalf("bad prompt layers: required=%d role=%d technical=%d in %q", required, role, technical, system)
 	}
 	if _, err := e.Fallback(t.Context(), "второй"); err != nil {
 		t.Fatal(err)

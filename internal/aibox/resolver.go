@@ -17,7 +17,10 @@ import (
 	"aiboxy/internal/providers"
 )
 
-const DefaultSystemPrompt = "Ты голосовой ассистент в умной колонке. Отвечай по-русски, коротко и по делу, обычно в два-четыре предложения. Ответ будет прочитан вслух: без Markdown, списков, эмодзи, ссылок и формул; числа и сокращения пиши так, как их произносят."
+// DefaultSystemPrompt is the default global user layer: the assistant identity
+// and the built-in voice rules. A stored character replaces this layer; the
+// mandatory part lives in characters.BuiltinPrompt and stays when it does.
+const DefaultSystemPrompt = characters.DefaultUserPrompt + " " + characters.VoicePrompt
 
 type Options struct {
 	Models         map[string]*Model
@@ -177,6 +180,9 @@ func (r *Resolver) command(text string) command {
 	return c
 }
 
+// systemPrompt is the global user layer: the base prompt plus the user's own
+// instructions. A stored character replaces it at request time; the settings
+// stay, so resetting the character restores them.
 func (r *Resolver) systemPrompt() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -378,9 +384,9 @@ func (r *Resolver) handle(ctx context.Context, text string, character characters
 			}
 			return "Сейчас системный промпт: " + custom + ".", true
 		}
-		// The command describes the selected persona and the user's own
-		// instruction. It never claims to read the assembled factual prompt,
-		// which also holds the base and technical layers.
+		// The command describes the selected persona. The global user layer is
+		// replaced while the persona is active, so the stored user prompt is
+		// reported as preserved rather than as part of the current prompt.
 		var parts []string
 		parts = append(parts, "Сейчас персонаж «"+character.Name+"».")
 		prompt := strings.TrimSpace(character.Prompt)
@@ -399,10 +405,11 @@ func (r *Resolver) handle(ctx context.Context, text string, character characters
 		if prompt == "" && len(rules) == 0 {
 			parts = append(parts, "Своего промпта и правил у персонажа нет.")
 		}
+		parts = append(parts, "Промпт и правила персонажа заменяют ваш системный промпт и базовые правила.")
 		if custom != "" {
-			parts = append(parts, "Указания пользователя: "+spokenField(custom))
+			parts = append(parts, "Ваши указания сохранены, но сейчас не используются: "+spokenField(custom))
 		}
-		parts = append(parts, "Это роль персонажа и указания пользователя, а не полный фактический промпт: к ним добавляются общие и технические инструкции.")
+		parts = append(parts, "Технические инструкции AIBox, памяти и поиска действуют всегда; после сброса персонажа ваши настройки вернутся.")
 		return strings.Join(parts, " "), true
 	}
 	return r.ask(ctx, text, character)
@@ -472,7 +479,10 @@ func (r *Resolver) askQuestion(ctx context.Context, question string, character c
 	if block != "" {
 		context = append(context, block)
 	}
-	system := characters.Prompt(r.systemPrompt(), character, strings.Join(context, "\n\n"))
+	// A stored character replaces the global user layer, so the user's base
+	// prompt and own instructions are not included; the built-in mandatory
+	// layer, request context (search, memory) and the character stay.
+	system := characters.Prompt(characters.BuiltinPrompt, r.systemPrompt(), character, strings.Join(context, "\n\n"))
 	started := r.now()
 	answer, err := model.Completer.Complete(ctx, system, messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer), "search", search.Mode)

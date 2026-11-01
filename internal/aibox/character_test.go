@@ -243,6 +243,13 @@ func TestCharacterPromptLayerOrderAndTechnicallyAuthoritative(t *testing.T) {
 	if _, err := f.memory.Add("Меня зовут Валерий", "panel"); err != nil {
 		t.Fatal(err)
 	}
+	// Unique markers prove that the character replaces both global parts:
+	// the base prompt and the user's own instructions.
+	base := "ГЛОБАЛЬНЫЙ_БАЗОВЫЙ_МАРКЕР"
+	user := "ГЛОБАЛЬНЫЙ_ПОЛЬЗОВАТЕЛЬСКИЙ_МАРКЕР"
+	if err := f.resolver.Apply(Update{BasePrompt: &base, UserPrompt: &user}); err != nil {
+		t.Fatal(err)
+	}
 	mustCharacter(t, f.chars, characters.Character{Name: "Шерлок", Prompt: "Ты Шерлок Холмс.", Rules: []string{"Говори кратко.", "Не выдумывай."}})
 	f.chars.SetActive(f.chars.List()[0].ID)
 
@@ -255,15 +262,18 @@ func TestCharacterPromptLayerOrderAndTechnicallyAuthoritative(t *testing.T) {
 		t.Fatalf("answer prompts = %d", len(systems))
 	}
 	system := systems[0]
-	base := strings.Index(system, "голосовой ассистент")
+	if strings.Contains(system, base) || strings.Contains(system, user) {
+		t.Fatalf("global user layer leaked with a character: %q", system)
+	}
+	required := strings.Index(system, characters.BuiltinPrompt)
 	role := strings.Index(system, "Ты Шерлок Холмс.")
 	rules := strings.Index(system, "Правила персонажа")
 	memory := strings.Index(system, "Меня зовут Валерий")
-	if base < 0 || role < 0 || rules < 0 || memory < 0 {
+	if required < 0 || role < 0 || rules < 0 || memory < 0 {
 		t.Fatalf("layer missing in %q", system)
 	}
-	if !(base < role && role < rules && rules < memory) {
-		t.Fatalf("layer order base=%d role=%d rules=%d memory=%d in %q", base, role, rules, memory, system)
+	if !(required < role && role < rules && rules < memory) {
+		t.Fatalf("layer order required=%d role=%d rules=%d memory=%d in %q", required, role, rules, memory, system)
 	}
 	if !strings.Contains(system, "Технические инструкции") || !strings.Contains(system, "важнее") {
 		t.Fatalf("technical priority is not stated: %q", system)
@@ -285,20 +295,67 @@ func TestCharacterPromptLayerOrderAndTechnicallyAuthoritative(t *testing.T) {
 		t.Fatalf("history = %+v", list)
 	}
 	for _, m := range list[0].Messages {
-		if m.Role == "system" || strings.Contains(m.Content, "Ты Шерлок Холмс.") || strings.Contains(m.Content, "Технические инструкции") {
+		if m.Role == "system" || strings.Contains(m.Content, "Ты Шерлок Холмс.") || strings.Contains(m.Content, "Технические инструкции") || strings.Contains(m.Content, base) || strings.Contains(m.Content, user) {
 			t.Fatalf("prompt written into history: %+v", m)
 		}
 	}
 
-	// Resetting leaves exactly the old prompt, without the persona's layer.
+	// Resetting restores the global base and the user's own instructions.
 	say(t, f.resolver, "персонаж по умолчанию")
 	say(t, f.resolver, "ещё вопрос")
 	system = answerSystems(f.llm)[2]
 	if strings.Contains(system, "Шерлок") || strings.Contains(system, "Правила персонажа") {
 		t.Fatalf("default still has the persona: %q", system)
 	}
-	if !strings.Contains(system, "голосовой ассистент") || !strings.Contains(system, "Меня зовут Валерий") {
-		t.Fatalf("default lost the old prompt or memory: %q", system)
+	if !strings.Contains(system, base) || !strings.Contains(system, user) {
+		t.Fatalf("reset did not restore the global prompt: %q", system)
+	}
+	if !strings.Contains(system, "Меня зовут Валерий") {
+		t.Fatalf("default lost the memory context: %q", system)
+	}
+}
+
+func TestCharacterKeepsSearchContextAndTechnicalLayer(t *testing.T) {
+	dir := t.TempDir()
+	chatStore, err := chats.Open(filepath.Join(dir, "chats"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	characterStore, err := characters.Open(filepath.Join(dir, "characters.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sherlock := mustCharacter(t, characterStore, characters.Character{Name: "Шерлок", Prompt: "Ты Шерлок Холмс."})
+	if err := characterStore.SetActive(sherlock.ID); err != nil {
+		t.Fatal(err)
+	}
+	llm := &searchLLM{}
+	r := New(Options{
+		Models:       map[string]*Model{"deepseek": {Key: "deepseek", Title: "DeepSeek", Config: providers.Config{BaseURL: "https://api.deepseek.com/v1"}, Completer: llm}},
+		DefaultModel: "deepseek",
+		StatePath:    filepath.Join(dir, "state.json"),
+		Store:        chatStore,
+		Characters:   characterStore,
+		Search:       &fakeSearcher{ready: true},
+	})
+	base := "ГЛОБАЛЬНЫЙ_БАЗОВЫЙ_МАРКЕР"
+	user := "ГЛОБАЛЬНЫЙ_ПОЛЬЗОВАТЕЛЬСКИЙ_МАРКЕР"
+	if err := r.Apply(Update{BasePrompt: &base, UserPrompt: &user}); err != nil {
+		t.Fatal(err)
+	}
+	say(t, r, "поговорим")
+	say(t, r, "какая погода")
+	system := answerSystems(&llm.fakeLLM)[0]
+	if strings.Contains(system, base) || strings.Contains(system, user) {
+		t.Fatalf("global user layer leaked with a character: %q", system)
+	}
+	for _, want := range []string{characters.BuiltinPrompt, "Ты Шерлок Холмс.", "Сегодня ", "поиск в интернете"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("search/technical context %q is missing: %q", want, system)
+		}
+	}
+	if len(llm.modes) != 1 || llm.modes[0] != providers.SearchTool {
+		t.Fatalf("search mode changed with a character: %v", llm.modes)
 	}
 }
 
@@ -526,8 +583,9 @@ func TestShowPromptReportsSelectedCharacterAndUserInstructions(t *testing.T) {
 		"Сейчас персонаж «Шерлок»",
 		"Промпт персонажа: Ты Шерлок Холмс.",
 		"Правила персонажа: Говори кратко. Не выдумывай.",
-		"Указания пользователя: Отвечай как пират.",
-		"не полный фактический промпт",
+		"Промпт и правила персонажа заменяют ваш системный промпт и базовые правила.",
+		"Ваши указания сохранены, но сейчас не используются: Отвечай как пират.",
+		"после сброса персонажа ваши настройки вернутся",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer %q does not contain %q", answer, want)

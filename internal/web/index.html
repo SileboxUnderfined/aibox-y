@@ -416,7 +416,7 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
             <div class="card-head">
               <div>
                 <h2 id="charactersTitle">Персонажи</h2>
-                <p class="lead">Роль, отдельный промпт и правила. Активный персонаж применяется ко всем чатам сразу.</p>
+                <p class="lead">Роль, отдельный промпт и правила. Активный персонаж применяется ко всем чатам сразу и заменяет ваш промпт и базовые правила; технические инструкции AIBox остаются.</p>
               </div>
               <div class="row">
                 <span class="badge accent" id="characterCount"></span>
@@ -448,7 +448,7 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
               <div class="field">
                 <label for="charPrompt">Промпт персонажа</label>
                 <textarea id="charPrompt" maxlength="8000" placeholder="Например: Ты Шерлок Холмс, отвечаешь наблюдательно и кратко."></textarea>
-                <p class="help">Отдельно от правил. Служебные инструкции AIBox, памяти и поиска остаются важнее персонажа.</p>
+                <p class="help">Отдельно от правил. Промпт и правила заменяют ваш системный промпт и базовые правила, пока персонаж активен; служебные инструкции AIBox, памяти и поиска остаются важнее персонажа. Ваши настройки вернутся после сброса.</p>
               </div>
               <div class="field">
                 <span class="label" id="charRulesLabel">Правила</span>
@@ -578,16 +578,16 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
       <section class="view" data-view="settings" hidden>
         <div class="stack">
           <section class="card">
-            <div class="card-head"><div><h2>Ваш промпт</h2><p class="lead">Добавляется к базовым правилам и задаёт роль или стиль ответов.</p></div></div>
+            <div class="card-head"><div><h2>Ваш промпт</h2><p class="lead">Задаёт роль или стиль ответов, когда персонаж не выбран. Активный персонаж заменяет эти указания; настройки сохраняются и вернутся после сброса.</p></div></div>
             <div class="field">
               <label for="userPrompt">Дополнительные указания</label>
               <textarea id="userPrompt" maxlength="4000" placeholder="Например: Ты пират. Отвечай с пиратскими словечками."></textarea>
-              <p class="help">Голосом: «Алиса, системный промпт …». Пустое поле — без дополнительной роли.</p>
+              <p class="help">Голосом: «Алиса, системный промпт …». Пустое поле — без дополнительной роли. При выбранном персонаже поле не действует, но не очищается.</p>
             </div>
             <div class="row" style="margin-top:10px"><button class="ghost small" type="button" id="userClear">Очистить</button></div>
           </section>
           <section class="card">
-            <div class="card-head"><div><h2>Базовые правила</h2><p class="lead">Правила для озвучки: коротко, без Markdown и ссылок. Меняйте осторожно.</p></div></div>
+            <div class="card-head"><div><h2>Базовые правила</h2><p class="lead">Правила для озвучки: коротко, без Markdown и ссылок. Действуют, когда персонаж не выбран; активный персонаж заменяет их, а технические правила AIBox остаются.</p></div></div>
             <div class="field">
               <label for="basePrompt">Системные правила</label>
               <textarea id="basePrompt" maxlength="8000"></textarea>
@@ -1306,7 +1306,7 @@ function renderCharacterDefault(info) {
   head.append(el("h3", "character-name", d.name));
   if (active) head.append(characterBadge("активен", "ok"));
   main.append(head);
-  main.append(el("p", "character-preview", "Без отдельного промпта: работают только базовые правила AIBox. Голосом — «Алиса, персонаж по умолчанию»."));
+  main.append(el("p", "character-preview", "Без персонажа: работают ваш промпт и базовые правила AIBox. Голосом — «Алиса, персонаж по умолчанию»."));
   const actions = el("div", "character-actions");
   const btn = el("button", active ? "ghost small" : "primary small", active ? "Активен по умолчанию" : "Сбросить на «По умолчанию»");
   btn.type = "button";

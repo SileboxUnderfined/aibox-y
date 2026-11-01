@@ -5,20 +5,30 @@ import (
 	"testing"
 )
 
-func TestPromptOrderAndOneCharacterCopy(t *testing.T) {
-	base := "Общие правила: отвечай голосом, без Markdown."
-	context := "Что пользователь рассказал о себе: меня зовут Валерий."
+const (
+	testRequired = "ВСТРОЕННЫЙ_ОБЯЗАТЕЛЬНЫЙ_МАРКЕР"
+	testGlobal   = "ГЛОБАЛЬНЫЙ_БАЗОВЫЙ_МАРКЕР"
+	testContext  = "КОНТЕКСТ_ПАМЯТИ_МАРКЕР"
+)
+
+func TestPromptCharacterReplacesGlobalLayer(t *testing.T) {
 	active := Character{ID: "sherlock", Name: "Шерлок", Prompt: "Ты Шерлок Холмс.", Rules: []string{"Говори кратко.", "Не выдумывай."}}
-	got := Prompt(base, active, context)
-	baseAt := strings.Index(got, base)
+	got := Prompt(testRequired, testGlobal, active, testContext)
+
+	if strings.Contains(got, testGlobal) {
+		t.Fatalf("the global user layer leaked into the character prompt: %q", got)
+	}
+	for _, want := range []string{testRequired, "Ты Шерлок Холмс.", "Правила персонажа", testContext} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("a layer is missing: %q not in %q", want, got)
+		}
+	}
+	requiredAt := strings.Index(got, testRequired)
 	roleAt := strings.Index(got, "Ты Шерлок Холмс.")
 	rulesAt := strings.Index(got, "Правила персонажа")
-	contextAt := strings.Index(got, context)
-	if baseAt < 0 || roleAt < 0 || rulesAt < 0 || contextAt < 0 {
-		t.Fatalf("a layer is missing: %q", got)
-	}
-	if !(baseAt < roleAt && roleAt < rulesAt && rulesAt < contextAt) {
-		t.Fatalf("layer order base=%d role=%d rules=%d context=%d", baseAt, roleAt, rulesAt, contextAt)
+	contextAt := strings.Index(got, testContext)
+	if !(requiredAt < roleAt && roleAt < rulesAt && rulesAt < contextAt) {
+		t.Fatalf("layer order required=%d role=%d rules=%d context=%d", requiredAt, roleAt, rulesAt, contextAt)
 	}
 	if strings.Count(got, "Ты Шерлок Холмс.") != 1 || strings.Count(got, "Правила персонажа") != 1 {
 		t.Fatalf("character layer repeated: %q", got)
@@ -32,9 +42,8 @@ func TestPromptOrderAndOneCharacterCopy(t *testing.T) {
 }
 
 func TestPromptCharacterOwnsIdentityWithoutOverridingTechnicalRules(t *testing.T) {
-	base := "Ты голосовой ассистент."
 	active := Character{ID: "sherlock", Name: "Шерлок", Prompt: "Ты Шерлок Холмс.", Rules: []string{"Говори кратко."}}
-	got := Prompt(base, active, "")
+	got := Prompt(BuiltinPrompt, DefaultUserPrompt, active, "")
 
 	for _, want := range []string{
 		"разговорную роль",
@@ -51,13 +60,16 @@ func TestPromptCharacterOwnsIdentityWithoutOverridingTechnicalRules(t *testing.T
 			t.Fatalf("identity/precedence text %q is missing: %q", want, got)
 		}
 	}
-	if !strings.HasPrefix(got, base) {
-		t.Fatalf("the base prompt was changed: %q", got)
+	if strings.Contains(got, DefaultUserPrompt) {
+		t.Fatalf("the default global identity was not replaced: %q", got)
 	}
-	if strings.Index(got, "важнее общего описания ассистента") > strings.Index(got, "Технические инструкции") {
+	// BuiltinPrompt also names the technical priority, so the character's own
+	// statement is the last occurrence.
+	technicalAt := strings.LastIndex(got, "Технические инструкции")
+	if strings.Index(got, "важнее общего описания ассистента") > technicalAt {
 		t.Fatal("identity precedence must not move technical instructions ahead of the role and rules")
 	}
-	if strings.Index(got, "Технические инструкции") < strings.Index(got, "Правила персонажа") {
+	if technicalAt < strings.Index(got, "Правила персонажа") {
 		t.Fatal("technical priority must follow the character rules")
 	}
 	if !strings.Contains(got, "сохраняя роль") {
@@ -66,19 +78,32 @@ func TestPromptCharacterOwnsIdentityWithoutOverridingTechnicalRules(t *testing.T
 }
 
 func TestPromptDefaultKeepsOldBehavior(t *testing.T) {
-	base := "старый системный промпт"
+	global := "старый системный промпт"
 	context := "контекст поиска и памяти"
-	if got := Prompt(base, Default(), ""); got != base {
+	if got := Prompt(testRequired, global, Default(), ""); got != global {
 		t.Fatalf("default without context = %q", got)
 	}
-	if got, want := Prompt(base, Default(), context), base+"\n\n"+context; got != want {
+	if got, want := Prompt(testRequired, global, Default(), context), global+"\n\n"+context; got != want {
 		t.Fatalf("default with context = %q, want %q", got, want)
 	}
-	if strings.Contains(Prompt(base, Default(), context), DefaultName) {
+	if strings.Contains(Prompt(testRequired, global, Default(), context), testRequired) {
+		t.Fatal("the mandatory layer must not be duplicated when the default global prompt already has it")
+	}
+	if strings.Contains(Prompt(testRequired, global, Default(), context), DefaultName) {
 		t.Fatal("the default character should not add a layer")
 	}
 	empty := Character{ID: "empty"}
-	if got := Prompt(base, empty, ""); got != base {
-		t.Fatalf("an empty stored character should not change the prompt: %q", got)
+	if got := Prompt(testRequired, global, empty, ""); got != testRequired {
+		t.Fatalf("a stored character replaces the global layer even without its own text: %q", got)
+	}
+}
+
+func TestDefaultPromptCompositionIsStable(t *testing.T) {
+	const want = "Ты голосовой ассистент в умной колонке. Отвечай по-русски, коротко и по делу, обычно в два-четыре предложения. Ответ будет прочитан вслух: без Markdown, списков, эмодзи, ссылок и формул; числа и сокращения пиши так, как их произносят."
+	if got := DefaultUserPrompt + " " + VoicePrompt; got != want {
+		t.Fatalf("default global prompt changed: %q", got)
+	}
+	if !strings.Contains(BuiltinPrompt, VoicePrompt) {
+		t.Fatal("the mandatory layer must keep the voice rules")
 	}
 }

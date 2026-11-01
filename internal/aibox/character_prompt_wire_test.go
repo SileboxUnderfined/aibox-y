@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -92,6 +93,13 @@ type wireFixture struct {
 // path with synthetic data. No real API is contacted; the key is a dummy.
 func setupWire(t *testing.T, character *characters.Character) wireFixture {
 	t.Helper()
+	return setupWireState(t, character, "")
+}
+
+// setupWireState is setupWire with a pre-seeded state.json, so a test can set
+// the global base prompt and user prompt before the resolver starts.
+func setupWireState(t *testing.T, character *characters.Character, stateJSON string) wireFixture {
+	t.Helper()
 	dir := t.TempDir()
 	chatStore, err := chats.Open(filepath.Join(dir, "chats"))
 	if err != nil {
@@ -116,10 +124,16 @@ func setupWire(t *testing.T, character *characters.Character) wireFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	statePath := filepath.Join(dir, "state.json")
+	if stateJSON != "" {
+		if err := os.WriteFile(statePath, []byte(stateJSON), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	resolver := New(Options{
 		Models:       map[string]*Model{"synthetic": {Key: "synthetic", Title: "Синтетическая", Completer: completer}},
 		DefaultModel: "synthetic",
-		StatePath:    filepath.Join(dir, "state.json"),
+		StatePath:    statePath,
 		Store:        chatStore,
 		Characters:   characterStore,
 	})
@@ -137,8 +151,11 @@ func setupWire(t *testing.T, character *characters.Character) wireFixture {
 
 func assertCharacterSystem(t *testing.T, system, role string) {
 	t.Helper()
-	if !strings.HasPrefix(system, DefaultSystemPrompt) {
-		t.Fatalf("base prompt is not intact: %q", system)
+	if !strings.HasPrefix(system, characters.BuiltinPrompt) {
+		t.Fatalf("mandatory prompt is not intact: %q", system)
+	}
+	if strings.Contains(system, characters.DefaultUserPrompt) {
+		t.Fatalf("default global identity was not replaced: %q", system)
 	}
 	for _, want := range []string{
 		role,
@@ -265,6 +282,39 @@ func TestCharacterPromptReachesProviderWire(t *testing.T) {
 			t.Fatalf("quick question request = %+v", messages[0])
 		}
 	})
+}
+
+func TestCharacterReplacesGlobalUserLayerOnProviderWire(t *testing.T) {
+	role := "Ты Шерлок Холмс."
+	character := characters.Character{Name: "Шерлок", Prompt: role, Rules: []string{"Говори кратко."}}
+	const (
+		base = "ГЛОБАЛЬНЫЙ_БАЗОВЫЙ_МАРКЕР"
+		user = "ГЛОБАЛЬНЫЙ_ПОЛЬЗОВАТЕЛЬСКИЙ_МАРКЕР"
+	)
+	f := setupWireState(t, &character, `{"base_prompt":"`+base+`","system_prompt":"`+user+`"}`)
+	say(t, f.resolver, "новый чат разговор")
+	say(t, f.resolver, "кто ты")
+	systems, _ := f.capture.answerRequests()
+	if len(systems) != 1 {
+		t.Fatalf("answer requests = %d", len(systems))
+	}
+	assertCharacterSystem(t, systems[0], role)
+	if strings.Contains(systems[0], base) || strings.Contains(systems[0], user) {
+		t.Fatalf("global user layer reached the provider with a character: %q", systems[0])
+	}
+
+	say(t, f.resolver, "персонаж по умолчанию")
+	say(t, f.resolver, "ещё вопрос")
+	systems, _ = f.capture.answerRequests()
+	if len(systems) != 2 {
+		t.Fatalf("answer requests after reset = %d", len(systems))
+	}
+	if !strings.Contains(systems[1], base) || !strings.Contains(systems[1], user) {
+		t.Fatalf("reset did not restore the global prompt on the wire: %q", systems[1])
+	}
+	if strings.Contains(systems[1], role) || strings.Contains(systems[1], "Правила персонажа") {
+		t.Fatalf("character layer survived the reset: %q", systems[1])
+	}
 }
 
 func TestDefaultCharacterPromptReachesProviderUnchanged(t *testing.T) {
