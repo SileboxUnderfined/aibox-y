@@ -3,18 +3,30 @@ package chats
 import (
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
-// Normalize lowercases, folds ё and drops punctuation, the way ASR text varies.
+// Normalize lowercases, folds ё, composes Unicode and drops punctuation, the
+// way ASR text varies. Composing first keeps a decomposed «й» or «ё» equal to
+// its precomposed spelling before punctuation is removed.
 func Normalize(s string) string {
-	s = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(s, "ё", "е"), "Ё", "Е"))
+	s = norm.NFC.String(s)
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "ё", "е")
+	s = norm.NFC.String(s)
 	var b strings.Builder
 	space := false
 	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(r)
 			space = false
-		} else if !space && b.Len() > 0 {
+		case unicode.IsMark(r):
+			if b.Len() > 0 && !space {
+				b.WriteRune(r)
+			}
+		case !space && b.Len() > 0:
 			b.WriteByte(' ')
 			space = true
 		}

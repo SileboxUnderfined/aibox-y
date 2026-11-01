@@ -11,19 +11,24 @@ import (
 	"time"
 
 	"aiboxy/internal/bridge"
+	"aiboxy/internal/characters"
 	"aiboxy/internal/chats"
 	"aiboxy/internal/memory"
 	"aiboxy/internal/providers"
 )
 
-const DefaultSystemPrompt = "Ты голосовой ассистент в умной колонке. Отвечай по-русски, коротко и по делу, обычно в два-четыре предложения. Ответ будет прочитан вслух: без Markdown, списков, эмодзи, ссылок и формул; числа и сокращения пиши так, как их произносят."
+// DefaultSystemPrompt is the default global user layer: the assistant identity
+// and the built-in voice rules. A stored character replaces this layer; the
+// mandatory part lives in characters.BuiltinPrompt and stays when it does.
+const DefaultSystemPrompt = characters.DefaultUserPrompt + " " + characters.VoicePrompt
 
 type Options struct {
 	Models         map[string]*Model
 	DefaultModel   string
 	StatePath      string // where voice-changed settings are kept
 	Store          *chats.Store
-	Memory         *memory.Store // facts every chat sees; nil turns the memory off
+	Characters     *characters.Store // global persona; nil keeps the old prompt
+	Memory         *memory.Store     // facts every chat sees; nil turns the memory off
 	SystemPrompt   string
 	Idle           time.Duration
 	MaxHistory     int
@@ -165,6 +170,9 @@ func (r *Resolver) command(text string) command {
 	switch {
 	case c.kind == cmdModelSwitch && r.find(c.name) == nil:
 		c.kind = cmdNone
+	case c.kind == cmdCharacter && r.opt.Characters == nil:
+		// Without a character store the phrase belongs to Alice as before.
+		c.kind = cmdNone
 	case c.kind.isMemory() && !r.memoryOn(), c.kind.isMemorySwitch() && r.opt.Memory == nil:
 		// With the memory off, "запомни …" is Alice's again.
 		c.kind = cmdNone
@@ -172,6 +180,9 @@ func (r *Resolver) command(text string) command {
 	return c
 }
 
+// systemPrompt is the global user layer: the base prompt plus the user's own
+// instructions. A stored character replaces it at request time; the settings
+// stay, so resetting the character restores them.
 func (r *Resolver) systemPrompt() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -224,6 +235,9 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 	if d.Route != "llm" {
 		return bridge.Resolution{Route: "yandex"}, nil
 	}
+	// Snapshot the global persona at the start of this request. Every answer
+	// path below reuses this value; a later switch only affects later requests.
+	character := r.characterAtStart()
 	if bridge.Interrupted(ctx) && r.inChat() && r.commands().stops(text) {
 		// "Алиса, стоп" over an answer only silences it and waits for the next question.
 		r.mu.Lock()
@@ -234,7 +248,7 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 		slog.Info("chat_answer_stopped")
 		return bridge.Resolution{Route: "llm", Silent: true}, nil
 	}
-	answer, ok := r.handle(ctx, text)
+	answer, ok := r.handle(ctx, text, character)
 	if !ok {
 		// Any model failure hands the request to Alice as if AIBox were not there.
 		slog.Info("llm_fallback_to_yandex")
@@ -245,9 +259,13 @@ func (r *Resolver) ResolveDecision(ctx context.Context, text string, d bridge.Ro
 
 // handle answers a chat request; false means the model failed and Alice
 // should answer instead.
-func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
+func (r *Resolver) handle(ctx context.Context, text string, character characters.Character) (string, bool) {
 	c := r.command(text)
 	slog.Info("chat_command", "kind", int(c.kind))
+	if c.kind == cmdCharacter {
+		r.touch()
+		return r.handleCharacter(c.name), true
+	}
 	if c.kind.isMemory() || c.kind.isMemorySwitch() {
 		r.touch()
 		return r.handleMemory(c, text), true
@@ -286,7 +304,7 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 			}
 			return "Новый чат. Слушаю.", true
 		}
-		answer, ok := r.askQuestion(ctx, question)
+		answer, ok := r.askQuestion(ctx, question, character)
 		if !ok {
 			r.mu.Lock()
 			r.active = nil // nothing was asked yet, so nothing to keep open
@@ -360,12 +378,41 @@ func (r *Resolver) handle(ctx context.Context, text string) (string, bool) {
 		r.mu.Lock()
 		custom := r.state.SystemPrompt
 		r.mu.Unlock()
-		if custom == "" {
-			return "Сейчас обычный системный промпт, без дополнительной роли.", true
+		if character.IsDefault() {
+			if custom == "" {
+				return "Сейчас обычный системный промпт, без дополнительной роли.", true
+			}
+			return "Сейчас системный промпт: " + custom + ".", true
 		}
-		return "Сейчас системный промпт: " + custom + ".", true
+		// The command describes the selected persona. The global user layer is
+		// replaced while the persona is active, so the stored user prompt is
+		// reported as preserved rather than as part of the current prompt.
+		var parts []string
+		parts = append(parts, "Сейчас персонаж «"+character.Name+"».")
+		prompt := strings.TrimSpace(character.Prompt)
+		if prompt != "" {
+			parts = append(parts, "Промпт персонажа: "+spokenField(prompt))
+		}
+		rules := make([]string, 0, len(character.Rules))
+		for _, rule := range character.Rules {
+			if rule = strings.TrimSpace(rule); rule != "" {
+				rules = append(rules, strings.TrimSuffix(rule, "."))
+			}
+		}
+		if len(rules) > 0 {
+			parts = append(parts, "Правила персонажа: "+spokenField(strings.Join(rules, ". ")))
+		}
+		if prompt == "" && len(rules) == 0 {
+			parts = append(parts, "Своего промпта и правил у персонажа нет.")
+		}
+		parts = append(parts, "Промпт и правила персонажа заменяют ваш системный промпт и базовые правила.")
+		if custom != "" {
+			parts = append(parts, "Ваши указания сохранены, но сейчас не используются: "+spokenField(custom))
+		}
+		parts = append(parts, "Технические инструкции AIBox, памяти и поиска действуют всегда; после сброса персонажа ваши настройки вернутся.")
+		return strings.Join(parts, " "), true
 	}
-	return r.ask(ctx, text)
+	return r.ask(ctx, text, character)
 }
 
 // touch keeps an open chat from closing while commands are spoken in it.
@@ -399,11 +446,11 @@ func (r *Resolver) listText() string {
 	return "Ваши чаты: " + strings.Join(names, ", ") + "."
 }
 
-func (r *Resolver) ask(ctx context.Context, text string) (string, bool) {
-	return r.askQuestion(ctx, stripWake(text))
+func (r *Resolver) ask(ctx context.Context, text string, character characters.Character) (string, bool) {
+	return r.askQuestion(ctx, stripWake(text), character)
 }
 
-func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bool) {
+func (r *Resolver) askQuestion(ctx context.Context, question string, character characters.Character) (string, bool) {
 	r.mu.Lock()
 	s := r.active
 	r.mu.Unlock()
@@ -418,16 +465,24 @@ func (r *Resolver) askQuestion(ctx context.Context, question string) (string, bo
 	ctx, cancel := context.WithTimeout(ctx, r.opt.RequestTimeout)
 	defer cancel()
 	model := r.modelFor(s.model)
-	system := r.systemPrompt()
 	search := r.searchFor(model)
 	if search.Mode != "" {
 		ctx = providers.WithSearch(ctx, search)
-		system += "\n\n" + searchPrompt(r.now())
 	}
 	block, autoMemory := r.memoryPrompt(model.Key, s.temporary)
-	if block != "" {
-		system += "\n\n" + block
+	// One fresh prompt per request, in the documented order: general prompt,
+	// character role and rules, then request context (search, memory).
+	var context []string
+	if search.Mode != "" {
+		context = append(context, searchPrompt(r.now()))
 	}
+	if block != "" {
+		context = append(context, block)
+	}
+	// A stored character replaces the global user layer, so the user's base
+	// prompt and own instructions are not included; the built-in mandatory
+	// layer, request context (search, memory) and the character stay.
+	system := characters.Prompt(characters.BuiltinPrompt, r.systemPrompt(), character, strings.Join(context, "\n\n"))
 	started := r.now()
 	answer, err := model.Completer.Complete(ctx, system, messages)
 	slog.Info("llm_answer", "ok", err == nil, "ms", time.Since(started).Milliseconds(), "chars", len(answer), "search", search.Mode)
@@ -587,4 +642,19 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(string(r[:1])) + string(r[1:])
+}
+
+// spokenField ends a stored field with a full stop for speech, without
+// repeating punctuation the user already typed.
+func spokenField(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	for _, mark := range []string{".", "!", "?", "…", "»"} {
+		if strings.HasSuffix(s, mark) {
+			return s
+		}
+	}
+	return s + "."
 }

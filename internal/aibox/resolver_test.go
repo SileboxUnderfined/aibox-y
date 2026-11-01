@@ -3,6 +3,7 @@ package aibox
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,18 +13,49 @@ import (
 )
 
 type fakeLLM struct {
-	name    string
+	name string
+
+	mu      sync.Mutex
 	calls   [][]providers.Message
 	systems []string
 }
 
 func (f *fakeLLM) Complete(_ context.Context, system string, m []providers.Message) (string, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, m)
 	f.systems = append(f.systems, system)
+	f.mu.Unlock()
 	if strings.HasPrefix(system, "Придумай название") {
 		return "Космос", nil
 	}
 	return "ответ " + m[len(m)-1].Content, nil
+}
+
+func (f *fakeLLM) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeLLM) callsSnapshot() [][]providers.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]providers.Message(nil), f.calls...)
+}
+
+func (f *fakeLLM) systemsSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.systems...)
+}
+
+func (f *fakeLLM) lastCall() []providers.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return nil
+	}
+	return f.calls[len(f.calls)-1]
 }
 
 func setup(t *testing.T) (*Resolver, *fakeLLM, *chats.Store) {
@@ -52,7 +84,7 @@ func TestPassThroughOutsideChat(t *testing.T) {
 	if route, _ := say(t, r, "хватит"); route != "yandex" {
 		t.Fatalf("exit outside chat should pass, got %s", route)
 	}
-	if len(llm.calls) != 0 {
+	if llm.callCount() != 0 {
 		t.Fatal("LLM called outside a chat")
 	}
 }
@@ -84,7 +116,7 @@ func TestNewChatSavesAndContinues(t *testing.T) {
 		t.Fatalf("continue answer = %q", a)
 	}
 	say(t, r, "а сколько их")
-	last := llm.calls[len(llm.calls)-1]
+	last := llm.lastCall()
 	if len(last) != 3 {
 		t.Fatalf("history not sent: %d messages", len(last))
 	}
@@ -152,11 +184,12 @@ func TestModelAndPrompt(t *testing.T) {
 	}
 	say(t, r, "поговорить")
 	say(t, r, "привет")
-	if len(cl.calls) != 1 || len(ds.calls) != 0 {
-		t.Fatalf("calls: claude %d deepseek %d", len(cl.calls), len(ds.calls))
+	if cl.callCount() != 1 || ds.callCount() != 0 {
+		t.Fatalf("calls: claude %d deepseek %d", cl.callCount(), ds.callCount())
 	}
-	if !strings.Contains(cl.systems[0], "Ты пират") || !strings.Contains(cl.systems[0], "прочитан вслух") {
-		t.Fatalf("system prompt = %q", cl.systems[0])
+	systems := cl.systemsSnapshot()
+	if len(systems) == 0 || !strings.Contains(systems[0], "Ты пират") || !strings.Contains(systems[0], "прочитан вслух") {
+		t.Fatalf("system prompt = %q", systems)
 	}
 	// Settings survive a restart.
 	r2 := New(opt)
@@ -287,7 +320,7 @@ func TestQuickQuestion(t *testing.T) {
 	if _, a := say(t, r, "а ночью?"); a != "ответ а ночью?" {
 		t.Fatalf("follow-up = %q", a)
 	}
-	if len(llm.calls[len(llm.calls)-1]) != 3 {
+	if len(llm.lastCall()) != 3 {
 		t.Fatal("follow-up lost the quick question")
 	}
 	say(t, r, "хватит")
@@ -315,10 +348,10 @@ func TestQuickQuestionModel(t *testing.T) {
 		t.Fatalf("answer = %q", a)
 	}
 	say(t, r, "а пульсар?")
-	if n := len(claude.calls); n < 2 {
+	if n := claude.callCount(); n < 2 {
 		t.Fatalf("claude calls = %d", n)
 	}
-	for _, c := range deepseek.calls {
+	for _, c := range deepseek.callsSnapshot() {
 		if c[len(c)-1].Content != "Что такое квазар" { // only the title may go elsewhere
 			t.Fatalf("default model asked %q", c[len(c)-1].Content)
 		}
@@ -394,7 +427,7 @@ func TestSearchModes(t *testing.T) {
 	if deepseek.modes[0] != "" {
 		t.Fatalf("DeepSeek without a search key searched: %q", deepseek.modes[0])
 	}
-	if strings.Contains(deepseek.systems[0], "поиск в интернете") {
+	if systems := deepseek.systemsSnapshot(); len(systems) == 0 || strings.Contains(systems[0], "поиск в интернете") {
 		t.Fatal("search prompt added without search")
 	}
 	say(t, r, "переключись на клод")
@@ -402,7 +435,7 @@ func TestSearchModes(t *testing.T) {
 	if claude.modes[0] != providers.SearchNative {
 		t.Fatalf("Claude without a key should use its own search, got %q", claude.modes[0])
 	}
-	if !strings.Contains(claude.systems[0], "Сегодня ") {
+	if systems := claude.systemsSnapshot(); len(systems) == 0 || !strings.Contains(systems[0], "Сегодня ") {
 		t.Fatal("no date in the search prompt")
 	}
 	searcher.ready = true
@@ -466,7 +499,8 @@ func TestSearchModelsInOrder(t *testing.T) {
 	if err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
 		t.Fatalf("out %q, err %v", out, err)
 	}
-	if sonar.calls != 1 || len(gpt.modes) != 1 || gpt.modes[0] != providers.SearchNative || !strings.Contains(gpt.systems[0], "поисковый помощник") {
+	gptSystems := gpt.systemsSnapshot()
+	if sonar.calls != 1 || len(gpt.modes) != 1 || gpt.modes[0] != providers.SearchNative || len(gptSystems) == 0 || !strings.Contains(gptSystems[0], "поисковый помощник") {
 		t.Fatalf("Tavily without a key must be skipped, Sonar tried, GPT asked with its own search: sonar %d, gpt %v", sonar.calls, gpt.modes)
 	}
 	var backends []string
@@ -513,7 +547,7 @@ func TestSearchOnlyProvider(t *testing.T) {
 		t.Fatalf("chat model does not use the search provider: %q", search.Mode)
 	}
 	out, err := search.Searcher.Search(context.Background(), "новости")
-	if err != nil || out != "ответ новости" || len(searchLLM.calls) != 1 || len(llm.calls) != 0 {
+	if err != nil || out != "ответ новости" || searchLLM.callCount() != 1 || llm.callCount() != 0 {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 }
@@ -537,8 +571,8 @@ func TestCustomProviderSearches(t *testing.T) {
 	if out, err := search.Searcher.Search(context.Background(), "курс доллара"); err != nil || !strings.HasPrefix(out, "ответ курс доллара") {
 		t.Fatalf("out %q, err %v", out, err)
 	}
-	if len(web.systems) != 1 || !strings.Contains(web.systems[0], "поисковый помощник") {
-		t.Fatalf("custom API not asked as a searcher: %v", web.systems)
+	if systems := web.systemsSnapshot(); len(systems) != 1 || !strings.Contains(systems[0], "поисковый помощник") {
+		t.Fatalf("custom API not asked as a searcher: %v", systems)
 	}
 }
 
@@ -564,12 +598,12 @@ func TestStopOverAnswerKeepsChat(t *testing.T) {
 			t.Fatalf("%q over an answer: %+v %v", stop, res, err)
 		}
 	}
-	calls := len(llm.calls)
+	calls := llm.callCount()
 	res, err := r.Resolve(over, "Алиса, а сколько у него цилиндров")
 	if err != nil || res.Route != "llm" || res.Silent || res.Answer != "ответ А сколько у него цилиндров" {
 		t.Fatalf("question over an answer: %+v %v", res, err)
 	}
-	if len(llm.calls) != calls+1 || len(llm.calls[len(llm.calls)-1]) != 3 {
+	if llm.callCount() != calls+1 || len(llm.lastCall()) != 3 {
 		t.Fatal("interrupting question lost the chat history")
 	}
 	if _, a := say(t, r, "стоп"); a != "Выхожу из чата." {

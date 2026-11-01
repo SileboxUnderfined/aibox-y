@@ -37,6 +37,11 @@ type Backend interface {
 	Chats() ([]aibox.ChatSummary, error)
 	Chat(id string) (*chats.Chat, error)
 	DeleteChat(id string) error
+	Characters() (aibox.CharactersInfo, error)
+	CreateCharacter(aibox.CharacterInput) (aibox.CharacterInfo, error)
+	UpdateCharacter(id string, in aibox.CharacterInput) (aibox.CharacterInfo, error)
+	DeleteCharacter(id string) error
+	SetActiveCharacter(id string) error
 }
 
 type Server struct {
@@ -117,6 +122,12 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("GET /api/characters", s.listCharacters)
+	mux.HandleFunc("POST /api/characters", s.createCharacter)
+	mux.HandleFunc("PUT /api/characters/{id}", s.updateCharacter)
+	mux.HandleFunc("DELETE /api/characters/{id}", s.deleteCharacter)
+	mux.HandleFunc("POST /api/characters/active", s.activateCharacter)
+	mux.HandleFunc("POST /api/characters/reset", s.resetCharacter)
 	return s.guard(mux)
 }
 

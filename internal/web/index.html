@@ -115,6 +115,28 @@ button.icon{padding:6px 9px;min-height:34px}
 .state strong{color:var(--ink);font-size:15px}
 .empty{display:flex;flex-direction:column;gap:6px;border:1px dashed var(--line-strong);border-radius:12px;padding:22px;background:var(--surface-2)}
 .empty strong{font-size:14.5px}.empty span{color:var(--muted);font-size:13px}
+.characters{display:flex;flex-direction:column}
+.character,.character-default{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;padding:15px 0;border-top:1px solid var(--line)}
+.character:first-child,.character-default:first-child{border-top:0;padding-top:0}
+.character.active,.character-default.active{background:color-mix(in srgb,var(--accent-soft) 62%,transparent);border-radius:11px;padding:14px 12px;border-top-color:transparent;margin:4px 0}
+.character-main{flex:1 1 260px;min-width:0}
+.character-name-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.character-name{margin:0;font-size:15.5px;overflow-wrap:anywhere}
+.character-preview{margin:5px 0 0;color:var(--muted);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:72ch}
+.character-rules{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.character-rules .badge{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block}
+.character-actions{display:flex;gap:7px;flex-wrap:wrap;flex:none;align-items:center}
+.rules-editor{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.rule-row{display:flex;gap:8px;align-items:center}
+.rule-row input{flex:1 1 auto;min-width:0}
+.rule-row button{flex:none}
+.character-form-actions{margin-top:14px}
+@media (max-width:560px){
+  .character-actions{width:100%;margin-left:0}
+  .character-actions button{flex:1 1 auto}
+  .rule-row{align-items:stretch;flex-direction:column}
+  .rule-row button{align-self:flex-end}
+}
 .skeleton{height:86px;border-radius:12px;background:linear-gradient(90deg,var(--surface-2) 25%,var(--line) 37%,var(--surface-2) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite}
 @keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
 .provider{border-top:1px solid var(--line);padding:18px 0}
@@ -244,6 +266,7 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
       <a href="#/overview" data-route="overview"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg>Обзор</a>
       <a href="#/providers" data-route="providers"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="4"/></svg>Провайдеры и модели</a>
       <a href="#/chats" data-route="chats"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8l-3 4z"/></svg>Чаты</a>
+      <a href="#/characters" data-route="characters"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Персонажи</a>
       <a href="#/memory" data-route="memory"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-1 5.8V16a3 3 0 0 0 4 3M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 1 5.8V16a3 3 0 0 1-4 3M12 4v16"/></svg>Память</a>
       <a href="#/commands" data-route="commands"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10M8 7a4 4 0 1 0 8 0M5 14a7 7 0 0 0 14 0M8 19v2M16 19v2"/></svg>Голосовые команды</a>
       <a href="#/search" data-route="search"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>Интернет-поиск</a>
@@ -289,6 +312,7 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
                   <div class="stack" style="gap:10px">
                     <a class="chat-row" href="#/providers"><b>Провайдеры и модели</b><small>Ключи, endpoint’ы и модель по умолчанию</small></a>
                     <a class="chat-row" href="#/chats"><b>Чаты</b><small>Сохранённые разговоры и их содержимое</small></a>
+                    <a class="chat-row" href="#/characters"><b>Персонажи</b><small>Глобальные роли, промпты и правила</small></a>
                     <a class="chat-row" href="#/memory"><b>Память</b><small>Факты, которые видят все чаты</small></a>
                     <a class="chat-row" href="#/search"><b>Интернет-поиск</b><small>Поисковики, порядок и режимы</small></a>
                   </div>
@@ -301,6 +325,7 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
                     <p class="hint" style="margin:0">«Алиса, запомни, что …» — добавить факт.</p>
                     <p class="hint" style="margin:0">«Алиса, включи интернет» — разрешить поиск.</p>
                     <p class="hint" style="margin:0">«Алиса, какая модель» — узнать активную модель.</p>
+                    <p class="hint" style="margin:0">«Алиса, персонаж Шерлок» — включить персонажа; «персонаж по умолчанию» — сбросить.</p>
                   </div>
                   <p class="hint" style="margin-top:12px">Полный список и свои фразы — в разделе <a href="#/commands">«Голосовые команды»</a>.</p>
                 </section>
@@ -380,6 +405,68 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
           </section>
           <section class="card chat-detail" id="chatDetail" aria-live="polite" aria-busy="false">
             <div class="empty"><strong>Выберите чат</strong><span>Слева список сохранённых разговоров. На телефоне список выше.</span></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- Персонажи -->
+      <section class="view" data-view="characters" hidden>
+        <div class="stack">
+          <section class="card" aria-labelledby="charactersTitle">
+            <div class="card-head">
+              <div>
+                <h2 id="charactersTitle">Персонажи</h2>
+                <p class="lead">Роль, отдельный промпт и правила. Активный персонаж применяется ко всем чатам сразу и заменяет ваш промпт и базовые правила; технические инструкции AIBox остаются.</p>
+              </div>
+              <div class="row">
+                <span class="badge accent" id="characterCount"></span>
+                <button class="ghost small" type="button" id="characterNew">Новый персонаж</button>
+              </div>
+            </div>
+            <p class="hint" style="margin:0 0 12px">Голосом: «Алиса, персонаж Имя» — включить, «Алиса, персонаж по умолчанию» — сбросить. Модель и ключи при этом не меняются.</p>
+            <div id="characterDefault"></div>
+            <div id="characterList" class="characters" aria-live="polite">
+              <div class="skeleton" aria-hidden="true"></div>
+            </div>
+            <p class="notice" data-notice="characters" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="card" id="characterEditor" aria-labelledby="characterEditorTitle">
+            <div class="card-head">
+              <div>
+                <h2 id="characterEditorTitle">Новый персонаж</h2>
+                <p class="lead">Имя, промпт и список правил хранятся отдельно и не меняют настройки провайдеров.</p>
+              </div>
+              <span class="badge" id="characterEditorMode">Создание</span>
+            </div>
+            <form id="characterForm" novalidate>
+              <div class="field">
+                <label for="charName">Имя</label>
+                <input id="charName" maxlength="80" autocomplete="off" required placeholder="Например: Шерлок Холмс">
+                <p class="help">Имя должно быть уникальным без учёта регистра и лишних пробелов.</p>
+              </div>
+              <div class="field">
+                <label for="charPrompt">Промпт персонажа</label>
+                <textarea id="charPrompt" maxlength="8000" placeholder="Например: Ты Шерлок Холмс, отвечаешь наблюдательно и кратко."></textarea>
+                <p class="help">Отдельно от правил. Промпт и правила заменяют ваш системный промпт и базовые правила, пока персонаж активен; служебные инструкции AIBox, памяти и поиска остаются важнее персонажа. Ваши настройки вернутся после сброса.</p>
+              </div>
+              <div class="field">
+                <span class="label" id="charRulesLabel">Правила</span>
+                <div class="rules-editor" id="charRules" role="group" aria-labelledby="charRulesLabel"></div>
+                <div class="row character-form-actions">
+                  <button class="ghost small" type="button" id="charAddRule">Добавить правило</button>
+                  <span class="hint" style="margin:0">Каждое правило — отдельная строка. Пустые правила не сохраняются.</span>
+                </div>
+              </div>
+              <p class="notice" id="characterFormStatus" role="status" aria-live="polite"></p>
+              <div class="savebar">
+                <button class="primary" type="submit" id="charSave">Создать персонажа</button>
+                <span class="dirty" data-dirty="characters" hidden>Есть несохранённые изменения</span>
+                <span class="spacer"></span>
+                <button class="ghost" type="button" id="charResetForm">Очистить</button>
+                <button class="ghost" type="button" id="charCancelEdit" hidden>Отмена</button>
+              </div>
+            </form>
           </section>
         </div>
       </section>
@@ -491,16 +578,16 @@ kbd{font:inherit;font-size:11.5px;border:1px solid var(--line-strong);border-bot
       <section class="view" data-view="settings" hidden>
         <div class="stack">
           <section class="card">
-            <div class="card-head"><div><h2>Ваш промпт</h2><p class="lead">Добавляется к базовым правилам и задаёт роль или стиль ответов.</p></div></div>
+            <div class="card-head"><div><h2>Ваш промпт</h2><p class="lead">Задаёт роль или стиль ответов, когда персонаж не выбран. Активный персонаж заменяет эти указания; настройки сохраняются и вернутся после сброса.</p></div></div>
             <div class="field">
               <label for="userPrompt">Дополнительные указания</label>
               <textarea id="userPrompt" maxlength="4000" placeholder="Например: Ты пират. Отвечай с пиратскими словечками."></textarea>
-              <p class="help">Голосом: «Алиса, системный промпт …». Пустое поле — без дополнительной роли.</p>
+              <p class="help">Голосом: «Алиса, системный промпт …». Пустое поле — без дополнительной роли. При выбранном персонаже поле не действует, но не очищается.</p>
             </div>
             <div class="row" style="margin-top:10px"><button class="ghost small" type="button" id="userClear">Очистить</button></div>
           </section>
           <section class="card">
-            <div class="card-head"><div><h2>Базовые правила</h2><p class="lead">Правила для озвучки: коротко, без Markdown и ссылок. Меняйте осторожно.</p></div></div>
+            <div class="card-head"><div><h2>Базовые правила</h2><p class="lead">Правила для озвучки: коротко, без Markdown и ссылок. Действуют, когда персонаж не выбран; активный персонаж заменяет их, а технические правила AIBox остаются.</p></div></div>
             <div class="field">
               <label for="basePrompt">Системные правила</label>
               <textarea id="basePrompt" maxlength="8000"></textarea>
@@ -554,6 +641,7 @@ const routeMeta = {
   overview: ["Обзор", "Состояние AIBox и быстрые переходы."],
   providers: ["Провайдеры и модели", "Подключения, ключи, endpoint’ы и модель по умолчанию."],
   chats: ["Чаты", "Сохранённые разговоры и доступные операции."],
+  characters: ["Персонажи", "Глобальные роли, промпты и правила."],
   memory: ["Память", "Факты, которые видят все чаты."],
   commands: ["Голосовые команды", "Свои фразы и поведение команд."],
   search: ["Интернет-поиск", "Поисковики, порядок и параметры."],
@@ -563,6 +651,11 @@ const state = {
   settings: null,
   status: null,
   chats: null,
+  characters: null,
+  characterLoading: false,
+  characterEditing: "",
+  characterDirty: false,
+  characterSaving: false,
   dirty: new Set(),
   saving: new Set(),
   current: "",
@@ -708,7 +801,30 @@ function revealActiveNav() {
   }
 }
 function route(initial = false) {
-  const {route, id} = parseHash();
+  const next = parseHash();
+  if (!initial && state.current === "characters" && next.route !== "characters" && state.dirty.has("characters")) {
+    const current = state.current;
+    confirmDialog({
+      title: "Покинуть раздел?",
+      text: "Несохранённые изменения персонажа будут потеряны.",
+      confirm: "Покинуть",
+      danger: true
+    }).then(ok => {
+      if (!ok) {
+        history.replaceState(null, "", "#/" + current);
+        renderRoute({route: current, id: ""}, true);
+        return;
+      }
+      clearDirty("characters");
+      resetCharacterEditor(false);
+      renderRoute(next, false);
+    });
+    return;
+  }
+  renderRoute(next, initial);
+}
+function renderRoute(next, initial) {
+  const {route, id} = next;
   state.current = route;
   for (const [name, view] of Object.entries(views)) show(view, name === route);
   $$("#nav a").forEach(a => {
@@ -732,6 +848,7 @@ function route(initial = false) {
     loadChats();
     if (id) loadChat(id); else renderChatEmpty();
   }
+  if (route === "characters") loadCharacters(false);
 }
 
 /* ---------- Обзор ---------- */
@@ -1139,6 +1256,360 @@ async function saveSearch() {
     sectionError("search", e);
   } finally {
     setSaving("search", false);
+  }
+}
+
+/* ---------- Персонажи ---------- */
+function characterLimits() {
+  const l = state.characters && state.characters.limits;
+  return l || {name: 80, prompt: 8000, rules: 30, rule: 500};
+}
+function clipText(text, max) {
+  text = String(text || "");
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
+}
+function characterBadge(text, cls) {
+  return el("span", "badge" + (cls ? " " + cls : ""), text);
+}
+function applyCharacterLimits() {
+  const l = characterLimits();
+  const name = $("#charName"), prompt = $("#charPrompt");
+  if (name) name.maxLength = l.name;
+  if (prompt) prompt.maxLength = l.prompt;
+  $$("#charRules .char-rule").forEach(input => { input.maxLength = l.rule; });
+}
+function renderCharacters(info) {
+  state.characters = info;
+  const n = (info.characters || []).length;
+  $("#characterCount").textContent = n ? n + " " + plural(n, "персонаж", "персонажа", "персонажей") : "Пока пусто";
+  applyCharacterLimits();
+  renderCharacterDefault(info);
+  const list = $("#characterList");
+  clear(list);
+  if (!n) {
+    const empty = el("div", "empty");
+    empty.append(el("strong", "", "Пока нет персонажей"), el("span", "", "Создайте первого в форме ниже. Голосом его можно включить: «Алиса, персонаж Имя»."));
+    list.append(empty);
+    return;
+  }
+  for (const c of info.characters) list.append(characterCard(c));
+}
+function renderCharacterDefault(info) {
+  const box = $("#characterDefault");
+  if (!box) return;
+  clear(box);
+  const d = info.default;
+  const active = info.active === d.id;
+  const row = el("div", "character-default" + (active ? " active" : ""));
+  const main = el("div", "character-main");
+  const head = el("div", "character-name-row");
+  head.append(el("h3", "character-name", d.name));
+  if (active) head.append(characterBadge("активен", "ok"));
+  main.append(head);
+  main.append(el("p", "character-preview", "Без персонажа: работают ваш промпт и базовые правила AIBox. Голосом — «Алиса, персонаж по умолчанию»."));
+  const actions = el("div", "character-actions");
+  const btn = el("button", active ? "ghost small" : "primary small", active ? "Активен по умолчанию" : "Сбросить на «По умолчанию»");
+  btn.type = "button";
+  btn.disabled = active;
+  if (active) btn.setAttribute("aria-pressed", "true");
+  else btn.addEventListener("click", () => resetActiveCharacter(btn));
+  actions.append(btn);
+  row.append(main, actions);
+  box.append(row);
+}
+function characterCard(c) {
+  const card = el("article", "character" + (c.active ? " active" : ""));
+  card.dataset.id = c.id;
+  const main = el("div", "character-main");
+  const head = el("div", "character-name-row");
+  head.append(el("h3", "character-name", c.name));
+  if (c.active) head.append(characterBadge("активен", "ok"));
+  main.append(head);
+  main.append(el("p", "character-preview", c.prompt ? clipText(c.prompt, 260) : "Промпт не задан — работают роль по имени и правила."));
+  if ((c.rules || []).length) {
+    const rules = el("div", "character-rules");
+    for (const rule of c.rules.slice(0, 4)) rules.append(characterBadge(clipText(rule, 72), ""));
+    if (c.rules.length > 4) rules.append(characterBadge("ещё " + (c.rules.length - 4), "accent"));
+    main.append(rules);
+  }
+  const actions = el("div", "character-actions");
+  const edit = el("button", "ghost small", "Изменить");
+  edit.type = "button";
+  edit.setAttribute("aria-label", "Изменить персонажа " + c.name);
+  edit.addEventListener("click", () => openCharacterEditor(c));
+  const on = el("button", c.active ? "ghost small" : "primary small", c.active ? "Активен" : "Сделать активным");
+  on.type = "button";
+  on.disabled = !!c.active;
+  on.setAttribute("aria-pressed", c.active ? "true" : "false");
+  if (!c.active) on.addEventListener("click", () => activateCharacter(c, on));
+  const del = el("button", "danger small", "Удалить");
+  del.type = "button";
+  del.setAttribute("aria-label", "Удалить персонажа " + c.name);
+  del.addEventListener("click", () => deleteCharacter(c, del));
+  actions.append(edit, on, del);
+  card.append(main, actions);
+  return card;
+}
+async function loadCharacters(force = false) {
+  if (state.characterLoading) return;
+  state.characterLoading = true;
+  if (force || !state.characters) {
+    const list = $("#characterList");
+    clear(list);
+    const sk = el("div", "skeleton");
+    sk.setAttribute("aria-hidden", "true");
+    list.append(sk);
+  }
+  try {
+    const info = await api("/api/characters");
+    state.characters = info;
+    renderCharacters(info);
+    if (state.characterEditing && !info.characters.some(c => c.id === state.characterEditing)) {
+      resetCharacterEditor(false);
+    }
+    notice("characters", "", "");
+  } catch (e) {
+    const list = $("#characterList");
+    clear(list);
+    const box = el("div", "state");
+    box.append(el("strong", "", "Не удалось загрузить персонажей"), el("span", "", e.message));
+    const retry = el("button", "ghost small", "Повторить");
+    retry.type = "button";
+    retry.addEventListener("click", () => loadCharacters(true));
+    box.append(retry);
+    list.append(box);
+    $("#characterCount").textContent = "Ошибка";
+    notice("characters", "Ошибка загрузки: " + e.message, "bad");
+  } finally {
+    state.characterLoading = false;
+  }
+}
+function addCharacterRule(value = "") {
+  const box = $("#charRules");
+  if (!box) return null;
+  const limits = characterLimits();
+  if (box.children.length >= limits.rules) return null;
+  const row = el("div", "rule-row");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "char-rule";
+  input.autocomplete = "off";
+  input.value = value;
+  input.maxLength = limits.rule;
+  input.placeholder = "Например: Говори кратко и по делу";
+  input.addEventListener("input", markCharacterDirty);
+  const rm = el("button", "ghost small", "Удалить");
+  rm.type = "button";
+  rm.addEventListener("click", () => {
+    row.remove();
+    renumberCharacterRules();
+    markCharacterDirty();
+  });
+  row.append(input, rm);
+  box.append(row);
+  renumberCharacterRules();
+  return input;
+}
+function renumberCharacterRules() {
+  const box = $("#charRules");
+  if (!box) return;
+  $$(".char-rule", box).forEach((input, i) => input.setAttribute("aria-label", "Правило " + (i + 1)));
+  $$(".rule-row", box).forEach((row, i) => {
+    const btn = row.querySelector("button");
+    if (btn) btn.setAttribute("aria-label", "Удалить правило " + (i + 1));
+  });
+  const add = $("#charAddRule");
+  if (add) {
+    add.disabled = box.children.length >= characterLimits().rules;
+    add.title = add.disabled ? "Достигнут предел правил" : "";
+  }
+}
+function setCharacterDirty(on) {
+  state.characterDirty = !!on;
+  if (on) state.dirty.add("characters");
+  else state.dirty.delete("characters");
+  refreshDirty("characters");
+  const save = $("#charSave");
+  if (save) save.disabled = state.characterSaving || (!!state.characterEditing && !state.characterDirty);
+}
+function markCharacterDirty() { setCharacterDirty(true); }
+function fillCharacterEditor(c) {
+  state.characterEditing = c ? c.id : "";
+  $("#charName").value = c ? c.name : "";
+  $("#charPrompt").value = c ? (c.prompt || "") : "";
+  const box = $("#charRules");
+  clear(box);
+  if (c && (c.rules || []).length) for (const rule of c.rules) addCharacterRule(rule);
+  else addCharacterRule("");
+  $("#characterEditorTitle").textContent = c ? "Редактировать персонажа" : "Новый персонаж";
+  $("#characterEditorMode").textContent = c ? "Редактирование" : "Создание";
+  $("#charSave").textContent = c ? "Сохранить персонажа" : "Создать персонажа";
+  $("#charCancelEdit").hidden = !c;
+  const status = $("#characterFormStatus");
+  status.textContent = "";
+  status.className = "notice";
+  applyCharacterLimits();
+  setCharacterDirty(false);
+}
+function resetCharacterEditor(focus) {
+  $("#characterForm").reset();
+  fillCharacterEditor(null);
+  if (focus) $("#charName").focus();
+}
+async function openCharacterEditor(c) {
+  if (state.characterDirty) {
+    const ok = await confirmDialog({
+      title: "Заменить изменения?",
+      text: "Несохранённые изменения текущего персонажа будут потеряны.",
+      confirm: "Продолжить",
+      danger: true
+    });
+    if (!ok) return;
+  }
+  fillCharacterEditor(c);
+  $("#characterEditor").scrollIntoView({block: "start", behavior: "smooth"});
+  $("#charName").focus({preventScroll: true});
+}
+async function startNewCharacter() {
+  if (state.characterDirty) {
+    const ok = await confirmDialog({
+      title: "Начать нового персонажа?",
+      text: "Несохранённые изменения текущего персонажа будут потеряны.",
+      confirm: "Продолжить",
+      danger: true
+    });
+    if (!ok) return;
+  }
+  resetCharacterEditor(true);
+  $("#characterEditor").scrollIntoView({block: "start", behavior: "smooth"});
+}
+async function clearCharacterEditor() {
+  if (state.characterDirty) {
+    const ok = await confirmDialog({
+      title: "Очистить форму?",
+      text: "Несохранённые изменения персонажа будут потеряны.",
+      confirm: "Очистить",
+      danger: true
+    });
+    if (!ok) return;
+  }
+  resetCharacterEditor(true);
+  notice("characters", "", "");
+}
+function characterRulesFromEditor() {
+  return $$("#charRules .char-rule").map(input => input.value.trim()).filter(Boolean);
+}
+function validateCharacterEditor() {
+  const name = $("#charName").value.trim();
+  const prompt = $("#charPrompt").value.trim();
+  const rules = characterRulesFromEditor();
+  const limits = characterLimits();
+  const status = $("#characterFormStatus");
+  const fail = (message, field) => {
+    status.textContent = message;
+    status.className = "notice bad";
+    if (field) field.focus();
+    return null;
+  };
+  if (!name) return fail("Укажите имя персонажа.", $("#charName"));
+  if (name.length > limits.name) return fail("Имя не длиннее " + limits.name + " символов.", $("#charName"));
+  if (prompt.length > limits.prompt) return fail("Промпт не длиннее " + limits.prompt + " символов.", $("#charPrompt"));
+  if (rules.length > limits.rules) return fail("Не больше " + limits.rules + " правил.", $("#charAddRule"));
+  const long = rules.find(rule => rule.length > limits.rule);
+  if (long) return fail("Правило не длиннее " + limits.rule + " символов.", $("#charRules .char-rule"));
+  return {name, prompt, rules};
+}
+async function saveCharacter(ev) {
+  ev.preventDefault();
+  if (state.characterSaving) return;
+  const input = validateCharacterEditor();
+  if (!input) return;
+  const editing = state.characterEditing;
+  const btn = $("#charSave"), status = $("#characterFormStatus");
+  state.characterSaving = true;
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  btn.textContent = "Сохранение…";
+  status.textContent = "Сохраняю…";
+  status.className = "notice";
+  try {
+    const path = editing ? "/api/characters/" + encodeURIComponent(editing) : "/api/characters";
+    const info = await api(path, {method: editing ? "PUT" : "POST", body: JSON.stringify(input)});
+    state.characters = info;
+    resetCharacterEditor(false);
+    renderCharacters(info);
+    notice("characters", editing ? "Изменения сохранены." : "Персонаж создан.", "ok");
+    toast(editing ? "Персонаж сохранён." : "Персонаж создан.");
+  } catch (e) {
+    status.textContent = "Ошибка: " + e.message;
+    status.className = "notice bad";
+    notice("characters", "Не удалось сохранить: " + e.message, "bad");
+    toast("Не удалось сохранить персонажа: " + e.message, "bad");
+  } finally {
+    state.characterSaving = false;
+    btn.setAttribute("aria-busy", "false");
+    btn.textContent = state.characterEditing ? "Сохранить персонажа" : "Создать персонажа";
+    setCharacterDirty(state.characterDirty);
+  }
+}
+async function activateCharacter(c, btn) {
+  if (c.active || state.characterSaving) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Переключаю…";
+  try {
+    const info = await api("/api/characters/active", {method: "POST", body: JSON.stringify({id: c.id})});
+    state.characters = info;
+    renderCharacters(info);
+    notice("characters", "Активный персонаж — «" + c.name + "». Он применяется ко всем чатам.", "ok");
+    toast("Персонаж «" + c.name + "» включён.");
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = old;
+    notice("characters", "Не удалось переключить: " + e.message, "bad");
+    toast("Не удалось переключить персонажа: " + e.message, "bad");
+  }
+}
+async function resetActiveCharacter(btn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Сбрасываю…";
+  try {
+    const info = await api("/api/characters/reset", {method: "POST", body: "{}"});
+    state.characters = info;
+    renderCharacters(info);
+    notice("characters", "Выбран персонаж «По умолчанию».", "ok");
+    toast("Персонаж сброшен.");
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = old;
+    notice("characters", "Не удалось сбросить: " + e.message, "bad");
+    toast("Не удалось сбросить персонажа: " + e.message, "bad");
+  }
+}
+async function deleteCharacter(c, btn) {
+  const ok = await confirmDialog({
+    title: "Удалить персонажа?",
+    text: "«" + c.name + "» будет удалён с колонки." + (c.active ? " Сейчас он активен — AIBox вернётся к «По умолчанию»." : "") + " Это действие нельзя отменить.",
+    confirm: "Удалить",
+    danger: true
+  });
+  if (!ok) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Удаляю…";
+  try {
+    const info = await api("/api/characters/" + encodeURIComponent(c.id), {method: "DELETE"});
+    state.characters = info;
+    if (state.characterEditing === c.id) resetCharacterEditor(false);
+    renderCharacters(info);
+    notice("characters", "Персонаж «" + c.name + "» удалён.", "ok");
+    toast("Персонаж удалён.");
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = old;
+    notice("characters", "Не удалось удалить: " + e.message, "bad");
+    toast("Не удалось удалить персонажа: " + e.message, "bad");
   }
 }
 
@@ -1683,6 +2154,12 @@ async function boot() {
   state.settings = null;
   state.chats = null;
   state.status = null;
+  state.characters = null;
+  state.characterEditing = "";
+  state.characterDirty = false;
+  state.characterLoading = false;
+  state.characterSaving = false;
+  state.dirty.delete("characters");
   try {
     const s = await api("/api/settings");
     state.settings = s;
@@ -1691,6 +2168,7 @@ async function boot() {
     renderMemory(s);
     renderCommands(s);
     renderSettings(s);
+    resetCharacterEditor(false);
     updateCounts();
     state.booted = true;
     show($("#bootState"), false);
@@ -1718,6 +2196,16 @@ function wire() {
     const field = $("#" + id);
     field.addEventListener("input", () => markDirty("settings"));
   });
+  $("#characterForm").addEventListener("submit", saveCharacter);
+  $("#charAddRule").addEventListener("click", () => {
+    const input = addCharacterRule("");
+    if (input) { markCharacterDirty(); input.focus(); }
+  });
+  $("#charResetForm").addEventListener("click", clearCharacterEditor);
+  $("#charCancelEdit").addEventListener("click", clearCharacterEditor);
+  $("#characterNew").addEventListener("click", startNewCharacter);
+  $("#charName").addEventListener("input", markCharacterDirty);
+  $("#charPrompt").addEventListener("input", markCharacterDirty);
   $("#userClear").addEventListener("click", () => { $("#userPrompt").value = ""; markDirty("settings"); $("#userPrompt").focus(); });
   $("#baseReset").addEventListener("click", () => { $("#basePrompt").value = state.settings ? (state.settings.default_base_prompt || "") : ""; markDirty("settings"); $("#basePrompt").focus(); });
   $("#providerForm").addEventListener("submit", saveProviderForm);
